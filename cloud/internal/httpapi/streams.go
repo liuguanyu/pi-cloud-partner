@@ -69,6 +69,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 		"lastSeq":  s.cfg.Hub.LastSeq(pair.ID),
 		"bridgeOn": s.cfg.Hub.Online(pair.DeviceID),
 		"serverTS": s.cfg.Now(),
+		"bootId":   s.bootID,
 	})
 	if _, err := fmt.Fprintf(w, "event: stream.hello\ndata: %s\n\n", helloPayload); err != nil {
 		return

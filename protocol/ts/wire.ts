@@ -97,6 +97,8 @@ export interface StreamHelloPayload {
   lastSeq: number;
   bridgeOn: boolean;
   serverTS: number;
+  /** 云端进程标识：变了说明 seq 已归零，本地游标必须丢弃 */
+  bootId?: string;
 }
 
 /** 审批请求载荷（云 → 手机），由 bridge 的 extension_ui_request 映射而来 */

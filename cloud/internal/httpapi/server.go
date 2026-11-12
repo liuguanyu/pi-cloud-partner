@@ -15,6 +15,8 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -47,6 +49,9 @@ type Server struct {
 	cfg     Config
 	mux     *http.ServeMux
 	limiter *rateLimiter
+	// bootID 每次进程启动随机生成。seq 是进程内计数，重启会归零，
+	// 客户端据此判断「本地游标是否已经过期」。
+	bootID string
 }
 
 func New(cfg Config) *Server {
@@ -56,7 +61,16 @@ func New(cfg Config) *Server {
 	if cfg.Now == nil {
 		cfg.Now = func() int64 { return time.Now().UnixMilli() }
 	}
-	s := &Server{cfg: cfg, mux: http.NewServeMux(), limiter: newRateLimiter(10, time.Minute)}
+	boot := make([]byte, 8)
+	if _, err := rand.Read(boot); err != nil {
+		panic("cloud: entropy source unavailable: " + err.Error())
+	}
+	s := &Server{
+		cfg:     cfg,
+		mux:     http.NewServeMux(),
+		limiter: newRateLimiter(10, time.Minute),
+		bootID:  hex.EncodeToString(boot),
+	}
 	s.routes()
 	return s
 }

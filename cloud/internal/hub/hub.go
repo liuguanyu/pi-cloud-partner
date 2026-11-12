@@ -274,12 +274,10 @@ func (h *Hub) Resume(pairID model.ID, cursors map[string]int64) []Frame {
 		return nil
 	}
 	if len(cursors) == 0 {
-		// 没有游标：给最近 50 条，让手机能画出当前状态
-		start := len(ps.ring) - 50
-		if start < 0 {
-			start = 0
-		}
-		return append([]Frame(nil), ps.ring[start:]...)
+		// 没有游标（首次打开 / 换了设备）：回放整个 ring。
+		// 之前只给最近 50 条，会把一条消息从中间截断 ——
+		// 表现为 markdown 里出现未闭合的 ** 与孤立的代码块。
+		return append([]Frame(nil), ps.ring...)
 	}
 	out := make([]Frame, 0, 64)
 	for _, f := range ps.ring {

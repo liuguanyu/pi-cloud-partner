@@ -2,7 +2,11 @@
 /**
  * 渲染层：文本 / 用户输入 / 思考。
  * 只做展示，无业务逻辑，无网络调用。
+ *
+ * 助手输出按 Markdown 渲染（agent 的回复几乎全是 markdown），
+ * 用户输入与思考过程保持纯文本 —— 保持原样比"看起来漂亮"更重要。
  */
+import MarkdownText from "./MarkdownText.vue";
 const props = defineProps<{
   kind: "text" | "user" | "thinking";
   text: string;
@@ -21,7 +25,7 @@ const props = defineProps<{
   </details>
 
   <div v-else class="block text">
-    <div class="body">{{ props.text }}</div>
+    <MarkdownText :text="props.text" />
   </div>
 </template>
 

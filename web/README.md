@@ -46,6 +46,13 @@ protocol/ts/wire.ts       线格式唯一真相源（与 bridge、cloud 共享�
 `store.ts` 把增量写进内部可变结构，最多 33ms 产出一份**不可变快照**，
 Vue 侧用 `shallowRef` 只换引用。
 
+**1.5 游标只在页面生命周期内有效**
+
+不要把它持久化到 localStorage。游标的前提是"客户端仍持有对应状态"；
+刷新后 store 是空的，带旧游标去连会让云端一条都不回放，表现为"刷新后历史全没了"。
+刷新时游标必须丢失，靠云端「无游标 → 回放整个 ring」兜底。
+`stream.hello.bootId` 变化时（云端重启，seq 归零）也要清空游标并重置 store。
+
 **2. SSE 不用原生 `EventSource`**
 
 它的 `Last-Event-ID` 只能带一个值，而我们是 per-task 游标；

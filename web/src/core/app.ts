@@ -53,6 +53,17 @@ export class AppController {
   readonly #creds: CredentialStore;
   readonly #now: () => number;
 
+  /**
+   * per-task 续传游标（仅页面生命周期内有效）。
+   *
+   * **不要持久化**：游标的前提是"客户端仍然持有对应状态"。
+   * 刷新页面后 store 是空的，带着旧游标去连反而会让云端一条都不回放，
+   * 表现为"刷新后历史全没了"。所以刷新时游标必须丢失，
+   * 由云端「无游标 → 回放整个 ring」兜底。
+   */
+  #cursors: Record<string, number> = {};
+  #bootId = "";
+
   #sse: SseClient | null = null;
   #phase: Phase = "booting";
   #primed = false;
@@ -252,9 +263,22 @@ export class AppController {
     this.#sse = new SseClient({
       url: `/sse?pairId=${encodeURIComponent(pairId)}`,
       token: pairToken,
-      cursors: () => this.store.cursors(),
-      onFrame: (env) => this.store.ingest(env),
+      cursors: () => this.#cursors,
+      onFrame: (env) => {
+        if (typeof env.seq === "number" && env.taskId && env.seq > (this.#cursors[env.taskId] ?? 0)) {
+          this.#cursors[env.taskId] = env.seq;
+        }
+        this.store.ingest(env);
+      },
       onHello: (payload) => {
+        const boot = payload.bootId ?? "";
+        if (boot && this.#bootId && boot !== this.#bootId) {
+          // 云端重启过：seq 归零，旧游标全部失效，必须从头回放
+          console.warn("[pcp] 云端已重启，丢弃本地游标并重新同步");
+          this.#cursors = {};
+          this.store.reset();
+        }
+        this.#bootId = boot || this.#bootId;
         this.store.ingestHello(payload);
         this.#bridgeOnline = payload.bridgeOn;
         this.#notify();
