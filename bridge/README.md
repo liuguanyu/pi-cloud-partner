@@ -83,8 +83,65 @@ RPC 子进程默认解析到的是 `zyuncs/openai/gpt-5.6-sol-cpr`，而这个 p
 1. **空 assistant 消息不代表模型无输出**，一定要展开 `stopReason` / `errorMessage`，否则会误判成"没反应"。
 2. bridge 上线后应**显式配置模型**，不要靠默认值——否则可能静默跑到一个无凭据的模型上。
 
+## 连云（daemon）
+
+```bash
+# 1) 云端创建凭据（在装有 MySQL 的机器上）
+pcpd device create --name office-mac     # 打印 deviceId / deviceToken（仅一次）
+
+# 2) 写入配置
+mkdir -p ~/.pi/bridge
+cat > ~/.pi/bridge/config.json <<'EOF'
+{
+  "serverUrl": "wss://your-host/ws/bridge",
+  "name": "office-mac",
+  "workspaces": ["/Users/me/devspace"],
+  "maxRunning": 2,
+  "maxLiveChildren": 4,
+  "idleRecycleMinutes": 10,
+  "model": "provider/model-id",
+  "approval": true,
+  "projectTrust": "deny",
+  "heartbeatSeconds": 30
+}
+EOF
+cat > ~/.pi/bridge/credentials.json <<'EOF'
+{"deviceId": "...", "deviceToken": "..."}
+EOF
+chmod 600 ~/.pi/bridge/credentials.json
+
+# 3) 校验配置后启动
+node src/daemon.ts --once-check
+node src/daemon.ts
+```
+
+环境变量覆盖：`PCP_SERVER_URL` `PCP_DEVICE_ID` `PCP_DEVICE_TOKEN`
+`PCP_BRIDGE_CONFIG` `PCP_BRIDGE_CREDENTIALS`（凭据也可走 0600 文件）。
+
+### 已端到端验证（本机 memory store + 真模型）
+
+```
+手机 task.start → 云 → bridge → pi → write 工具
+  → 审批弹窗经 SSE 到手机 → 手机批准 → pi 落盘 → task.settled
+产物 /tmp/pcp-e2e/hello.txt 内容 = "hi"
+事件流：pair.approved → stream.hello → task.enqueued → task.started
+        → pi.event ×N → ui.request → task.awaiting_approval → … → task.settled
+```
+
+### 为什么用 `ws` 而不是 Node 内置 WebSocket
+
+内置实现是 WHATWG 严格版，**不接受自定义请求头**，而 bridge 必须带
+`Authorization: Device <token>`（实测内置实现只会报 `Unexpected server response` 或无鉴权连接）。
+`ws` 自身零依赖，并支持 headers / ping / 背压。
+
+### 必须显式传 `--approve/--no-approve`
+
+RPC 模式下没人能回答 project trust 弹窗。不传就会**静默跳过**项目级
+`.pi/skills`、settings、MCP —— 表现为"我的项目技能不生效"却毫无提示。
+daemon 的 `projectTrust` 字段默认 `deny`（安全），要加载项目资源显式改 `approve`。
+
 ## 下一步
 
-- M1：`src/cloud/`（WSS 客户端 + 重连 + 游标续传）、`src/blob/`
-- M2：`src/queue/`（workspace 锁、容量、回收）、`src/worktree/`
+- M2 剩余：worktree 隔离、`control.queued` 落地、审批 90s 超时兜底的可观测性
+- M3：`src/blob/` 大产物上传、断线深缺口走 bridge ring
 - `cli.ts` 里的 `pendingControl` / `switchWorkspace` 是 M2 单 child 的临时实现，将迁到 `src/queue/`

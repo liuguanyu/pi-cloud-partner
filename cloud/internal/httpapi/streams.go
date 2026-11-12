@@ -253,6 +253,10 @@ func (s *Server) ingestBridgeFrame(ctx context.Context, dev model.Device, env pr
 	}
 
 	switch env.Type {
+	case protocol.TypeBridgePing:
+		// 保活帧：更新设备心跳后直接返回，不产生任何事件
+		_ = s.cfg.Store.TouchDevice(ctx, dev.ID, s.cfg.Now())
+		return
 	case protocol.TypeBridgeCapacity:
 		var cap protocol.Capacity
 		if err := env.Decode(&cap); err == nil {

@@ -43,7 +43,7 @@ function parseArgs(argv: string[]) {
     uiPolicy: "ask" as "ask" | "allow" | "deny",
   };
   for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
+    const arg = argv[i] ?? "";
     const next = () => argv[++i];
     switch (arg) {
       case "--cwd":
@@ -413,8 +413,8 @@ async function main(): Promise<void> {
     if (next.done) break;
     const line = String(next.value ?? "");
 
-    if (pendingUi) {
-      const req = pendingUi;
+    if (pendingUi !== null) {
+      const req: UiRequest = pendingUi;
       pendingUi = null;
       await client.respondUi(req.id, answerUi(req, line));
       continue;
