@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pcp/control.json",
+  "title": "Control",
+  "description": "下行控制面。bridge 拦截后翻译成 pi RPC 命令，永不进入 prompt 通道。",
+  "definitions": {
+    "Op": {
+      "type": "string",
+      "enum": ["task.start", "task.cancel", "task.input", "task.focus", "control.exec", "resume", "ui.response"]
+    },
+    "SlashName": {
+      "type": "string",
+      "description": "白名单内的控制面命令。未命中的 /xxx 作为普通 prompt 下发给 pi（由 pi 自己展开 skill/模板/扩展命令）",
+      "enum": ["/resume", "/new", "/name", "/session", "/tree", "/fork", "/clone", "/compact", "/model", "/thinking", "/export", "/abort", "/sessions", "/capacity"]
+    },
+    "ControlExec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "description": "两步式约定：无 args = 查询（返回候选列表），有 args = 执行",
+      "properties": {
+        "name": { "$ref": "#/definitions/SlashName" },
+        "args": { "type": "array", "items": { "type": "string" }, "description": "已按空白切分的参数" },
+        "raw": { "type": "string", "description": "原始输入，保留给 /compact 这类需要整段文本的命令" }
+      }
+    },
+    "TaskStart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompt", "workspace"],
+      "properties": {
+        "prompt": { "type": "string" },
+        "workspace": { "type": "string", "description": "绝对路径，必须在白名单内" },
+        "isolation": { "type": "string", "enum": ["shared", "worktree"], "default": "shared" },
+        "images": {
+          "type": "array",
+          "description": "与 pi prompt 的 ImageContent 一致；大图应走 blob 而非内联",
+          "items": {
+            "type": "object",
+            "required": ["type", "data", "mimeType"],
+            "properties": {
+              "type": { "const": "image" },
+              "data": { "type": "string" },
+              "mimeType": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "TaskInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskId", "text", "mode"],
+      "description": "「继续当前任务」通道，区别于 task.start（新任务）",
+      "properties": {
+        "taskId": { "type": "string" },
+        "text": { "type": "string" },
+        "mode": {
+          "type": "string",
+          "enum": ["steer", "follow_up"],
+          "description": "steer=插话到当前 run；follow_up=当前 run 结束后追加。run 已结束则等价于开新 run"
+        }
+      }
+    },
+    "Resume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cursors"],
+      "description": "断线续传。一个 SSE 连接承载多任务，因此游标是映射而非单个 Last-Event-ID",
+      "properties": {
+        "cursors": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 },
+          "description": "{ taskId: 已收到的最后 seq }，服务端回放其后的事件"
+        }
+      }
+    },
+    "UiResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId"],
+      "description": "回填 pi 的 extension_ui_response。超时由 pi 侧按 timeout 字段自动 resolve，bridge 不重复计时",
+      "properties": {
+        "requestId": { "type": "string" },
+        "value": { "description": "select/input/editor 的返回值" },
+        "confirmed": { "type": "boolean", "description": "confirm 的返回值" },
+        "cancelled": { "type": "boolean" }
+      }
+    }
+  },
+
+  "x-event-types": {
+    "control.exec": "载荷 ControlExec。返回 control.result（查询）或直接派发执行",
+    "control.result": "上行。载荷 { name, items } 或 { name, ok, data }",
+    "control.queued": "上行。载荷 { name, reason: 'run_in_progress', willRunAt: 'agent_settled', taskId }，UI 应显示「将在当前任务结束后执行」",
+    "ui.request": "上行。由 pi 的 extension_ui_request 映射而来，载荷额外补 taskId/taskTitle/toolName/summary，供手机端标注来源"
+  }
+}

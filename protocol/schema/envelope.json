@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pcp/envelope.json",
+  "title": "Envelope",
+  "description": "所有帧的统一外壳，双向对称。可选字段一律「缺省」表示无值，禁止出现 null（跨语言 JSON 语义一致性要求）。",
+  "type": "object",
+  "required": ["v", "type", "ts"],
+  "additionalProperties": false,
+  "properties": {
+    "v": { "const": 1, "description": "协议版本，用于版本协商" },
+    "type": { "type": "string", "description": "命名空间.动作，见 control.json / task.json" },
+    "ts": { "type": "integer", "description": "unix 毫秒（UTC），禁止浮点与字符串时间" },
+    "pairId": { "type": "string", "pattern": "^p_[0-9a-f]{8,32}$", "description": "pair 级帧必带" },
+    "taskId": { "type": "string", "pattern": "^t_[0-9a-f]{8,32}$", "description": "task 级帧必带" },
+    "runId": { "type": "string", "description": "一次 prompt → agent_settled 的执行标识，同一 task 可有多代 run" },
+    "epoch": { "type": "integer", "minimum": 0, "description": "task 内执行代数。bridge 切换/复用 child 时递增，用于丢弃迟到帧" },
+    "seq": { "type": "integer", "minimum": 0, "description": "per-task 单调游标，从 1 开始。pair 级帧不带" },
+    "cmdId": { "type": "string", "description": "上行命令幂等键（uuid）。网络重试必须复用同一个 cmdId" },
+    "payload": { "type": "object" }
+  }
+}

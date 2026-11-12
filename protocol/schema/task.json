@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pcp/task.json",
+  "title": "Task",
+  "description": "任务是一等公民。并发单位是 workspace（cwd），不是 pair。",
+  "definitions": {
+    "TaskStatus": {
+      "type": "string",
+      "enum": ["queued", "starting", "running", "awaiting_approval", "settled", "failed", "cancelled"]
+    },
+    "WorkspaceMode": {
+      "type": "string",
+      "enum": ["shared", "worktree"],
+      "description": "shared=直接在主工作树执行（该 workspace 内串行）；worktree=独立 git worktree 隔离（可与其他任务并行，含同 repo）"
+    },
+    "Task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskId", "pairId", "workspace", "workspaceMode", "status", "createdAt"],
+      "properties": {
+        "taskId": { "type": "string", "pattern": "^t_[0-9a-f]{8,32}$" },
+        "pairId": { "type": "string", "pattern": "^p_[0-9a-f]{8,32}$" },
+        "sessionId": { "type": "string", "description": "pi session uuid；starting 之前未知" },
+        "workspace": { "type": "string", "description": "绝对路径，必须在 bridge 的 workspace 白名单内" },
+        "workspaceMode": { "$ref": "#/definitions/WorkspaceMode" },
+        "worktreePath": { "type": "string", "description": "workspaceMode=worktree 时的实际执行目录" },
+        "branch": { "type": "string", "description": "worktree 模式下创建的分支名，如 pi/t_01a1cd9a" },
+        "status": { "$ref": "#/definitions/TaskStatus" },
+        "childId": { "type": "string", "description": "承载执行的 pi 子进程标识" },
+        "epoch": { "type": "integer", "minimum": 0 },
+        "title": {
+          "type": "string",
+          "description": "来自用户 /name 主动命名，否则为派生弱标题（workspace basename · HH:mm）。只有这个字段可能含用户输入，且仅为用户亲手输入的短字符串"
+        },
+        "cursor": { "type": "integer", "minimum": 0, "description": "该任务最新事件 seq，供手机端续传比对" },
+        "queuePosition": { "type": "integer", "minimum": 0, "description": "status=queued 时的排位，1 表示下一个执行" },
+        "createdAt": { "type": "integer" },
+        "startedAt": { "type": "integer" },
+        "settledAt": { "type": "integer" },
+        "exitReason": {
+          "type": "string",
+          "enum": ["completed", "aborted", "error", "queue_cancelled", "capacity", "worktree_failed"]
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "非聚焦任务的降级推送内容。聚焦任务才推全量 pi.event",
+          "properties": {
+            "lastLine": { "type": "string", "description": "最后一行输出摘要，截断至 200 字" },
+            "toolCalls": { "type": "integer" },
+            "tokens": { "type": "integer" },
+            "pendingApproval": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "Capacity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "bridge.capacity 事件载荷，手机端用来渲染 2/2 运行中",
+      "required": ["running", "maxRunning", "liveChildren", "maxLiveChildren"],
+      "properties": {
+        "running": { "type": "integer", "description": "正在执行的 run 数" },
+        "maxRunning": { "type": "integer", "description": "默认 2" },
+        "liveChildren": { "type": "integer", "description": "常驻 pi 进程数（含预热空闲）" },
+        "maxLiveChildren": { "type": "integer", "description": "默认 4" },
+        "queued": { "type": "integer" },
+        "memMB": { "type": "integer", "description": "所有 child RSS 之和" },
+        "memLimitMB": { "type": "integer", "description": "水位阈值，超出后新任务强制排队" }
+      }
+    }
+  },
+
+  "oneOf": [
+    { "$ref": "#/definitions/Task" },
+    { "$ref": "#/definitions/Capacity" }
+  ],
+
+  "x-event-types": {
+    "task.enqueued": "进入队列，载荷 Task（含 queuePosition）",
+    "task.started": "child 已就绪、run 已开始，载荷 Task（含 sessionId/childId/startedAt）",
+    "task.summary": "非聚焦任务的降级增量，载荷 { summary }，seq 仍递增",
+    "task.awaiting_approval": "工具待批，载荷 Task（summary.pendingApproval=true），同时会有 ui.request 帧",
+    "task.settled": "正常结束，载荷 Task（含 exitReason/settledAt）",
+    "task.title_updated": "标题变更，载荷 { title, source: 'user' | 'derived' }；source=user 时同步进云端 tasks.title",
+    "task.failed": "异常结束，载荷 { taskId, exitReason, error }",
+    "task.cancelled": "被取消，载荷 Task",
+    "pi.event": "聚焦任务的 pi 原始事件，payload 原样等于 JsonAgentSessionEvent（零翻译透传）",
+    "bridge.capacity": "容量变化，载荷 Capacity",
+    "bridge.online / bridge.offline": "bridge 连接状态，载荷 { reason }"
+  }
+}

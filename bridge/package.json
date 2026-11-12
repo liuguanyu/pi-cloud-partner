@@ -1,0 +1,17 @@
+{
+  "name": "@pcp/bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "pi-cloud-partner bridge：把 pi 的 stdio RPC 网络化",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "smoke": "node src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.5.2",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
