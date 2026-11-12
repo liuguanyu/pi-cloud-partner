@@ -308,6 +308,64 @@ func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleHistory 请求某任务的历史正文。
+//
+// 正文不在云端（SPEC D6），这里只做两件事：查出 sessionId、把请求转给 bridge。
+// 应答以 `history.data` 事件走 SSE 回来 —— 复用现有事件通道，不新增请求/响应语义。
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	pair, err := s.requirePairToken(r, r.URL.Query().Get("pairId"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	var body struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := decode(r, &body); err != nil {
+		s.fail(w, err)
+		return
+	}
+	taskID, err := protocol.ParseRef(body.TaskID, "t")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "taskId 格式非法")
+		return
+	}
+	task, err := s.cfg.Store.TaskByID(r.Context(), taskID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if task.PairID != pair.ID {
+		writeErr(w, http.StatusForbidden, "forbidden", "该任务不属于当前配对")
+		return
+	}
+	if task.SessionID == "" {
+		writeErr(w, http.StatusNotFound, "no_session", "该任务没有记录会话 id，无法回看历史")
+		return
+	}
+
+	payload := map[string]any{
+		"taskId":    body.TaskID,
+		"sessionId": task.SessionID,
+	}
+	// 任务起始时间：bridge 据此裁剪，避免把同会话里之前几轮一起返回
+	if task.StartedAt != nil {
+		payload["sinceMs"] = *task.StartedAt
+	}
+	env, err := protocol.New(protocol.TypeHistoryGet, s.cfg.Now()).WithPayload(payload)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	env.PairID = protocol.RefPair(pair.ID)
+	env.TaskID = body.TaskID
+	if err := s.cfg.Hub.Send(pair.DeviceID, env); err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "requested"})
+}
+
 // ── 小工具 ────────────────────────────────────────────────────
 
 func containsPath(allowed []string, want string) bool {

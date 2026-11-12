@@ -32,6 +32,8 @@ export const Down = {
   controlExec: "control.exec",
   resume: "resume",
   uiResponse: "ui.response",
+  /** 请求某任务的历史（正文在 bridge 磁盘，云端不存） */
+  historyGet: "history.get",
 } as const;
 
 /** 上行（bridge → 云） */
@@ -54,6 +56,8 @@ export const Up = {
   taskFailed: "task.failed",
   taskCancelled: "task.cancelled",
   taskTitleUpdated: "task.title_updated",
+  /** history.get 的应答 */
+  historyData: "history.data",
 } as const;
 
 /** 配对相关（云端向手机 SSE 推送） */
@@ -121,6 +125,30 @@ export interface TaskSummary {
   startedAt?: number;
   settledAt?: number;
   exitReason?: string;
+}
+
+/** history.get 载荷：云端从 tasks 表里取出 sessionId 一并下发 */
+export interface HistoryGetPayload {
+  taskId: string;
+  sessionId: string;
+  /** 任务开始时间（unix ms）。bridge 据此裁剪，避免返回整个会话 */
+  sinceMs?: number;
+}
+
+/** history.data 载荷：扁平 block 列表，与 web 的 TaskView.blocks 同构 */
+export interface HistoryDataPayload {
+  taskId: string;
+  blocks: Array<{
+    kind: "text" | "thinking" | "user" | "tool";
+    text?: string;
+    toolCallId?: string;
+    toolName?: string;
+    argsText?: string;
+    resultText?: string;
+    isError?: boolean;
+  }>;
+  missing?: boolean;
+  truncated?: boolean;
 }
 
 export function isEnvelope(value: unknown): value is Envelope {

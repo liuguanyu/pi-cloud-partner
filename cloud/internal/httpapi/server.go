@@ -99,6 +99,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/task/focus", s.handleTaskFocus)
 	s.mux.HandleFunc("GET /api/tasks", s.handleTaskList)
 	s.mux.HandleFunc("GET /api/workspaces", s.handleWorkspaces)
+	s.mux.HandleFunc("POST /api/history", s.handleHistory)
 	s.mux.HandleFunc("POST /api/control", s.handleControl)
 	s.mux.HandleFunc("POST /api/ui/respond", s.handleUIRespond)
 

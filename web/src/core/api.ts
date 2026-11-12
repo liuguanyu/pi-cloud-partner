@@ -142,6 +142,10 @@ export class ApiClient {
     return this.#json("POST", `/api/task/focus?pairId=${encodeURIComponent(pairId)}`, { kind: "bearer", token: pairToken }, { taskId });
   }
 
+  history(pairToken: string, pairId: string, taskId: string): Promise<{ status: string }> {
+    return this.#json("POST", `/api/history?pairId=${encodeURIComponent(pairId)}`, { kind: "bearer", token: pairToken }, { taskId });
+  }
+
   respondUi(
     pairToken: string,
     pairId: string,

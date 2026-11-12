@@ -171,8 +171,10 @@ type Task struct {
 	WorkspaceMode string
 	Status        string
 	Title         string // 用户 /name 命名优先，否则派生弱标题
-	StartedAt     *int64
-	SettledAt     *int64
-	ExitReason    string
-	BlobCount     int
+	// SessionID 是 pi 的会话 id，历史回看时由 bridge 用它定位 JSONL 文件
+	SessionID  string
+	StartedAt  *int64
+	SettledAt  *int64
+	ExitReason string
+	BlobCount  int
 }

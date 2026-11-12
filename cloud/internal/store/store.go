@@ -66,6 +66,7 @@ type Store interface {
 	// 云端在不同事件里只知道一部分信息（enqueued 有 workspace，settled 有 exitReason），
 	// 用整行覆盖会把先前写入的字段抹掉。
 	UpsertTask(ctx context.Context, t model.Task) error
+	TaskByID(ctx context.Context, id model.ID) (model.Task, error)
 	TasksByPair(ctx context.Context, pairID model.ID, limit int) ([]model.Task, error)
 
 	Close() error

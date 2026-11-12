@@ -10,7 +10,9 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 
@@ -44,27 +46,74 @@ func Open(dsn string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// Migrate 应用内置 DDL（幂等，可重复执行）。
+// Migrate 应用内置 DDL。
+//
+// 用 schema_migrations 表记录已应用的版本，**每个文件只跑一次**。
+// 早期版本是「每次启动全量重跑」，依赖 CREATE TABLE IF NOT EXISTS 保持幂等；
+// 一旦出现 `ALTER TABLE ... ADD COLUMN` 就会在第二次启动时报
+// `Duplicate column name` 并导致服务崩溃重启 —— 这里改为版本化。
 func (s *Store) Migrate(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx,
+		`CREATE TABLE IF NOT EXISTS schema_migrations (
+		   version    VARCHAR(255) NOT NULL,
+		   applied_at BIGINT       NOT NULL,
+		   PRIMARY KEY (version)
+		 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`); err != nil {
+		return fmt.Errorf("创建 schema_migrations 失败: %w", err)
+	}
+
 	entries, err := migrations.ReadDir("migrations")
 	if err != nil {
 		return err
 	}
+	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
 			continue
 		}
-		raw, err := migrations.ReadFile("migrations/" + e.Name())
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		var exists int
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, name).Scan(&exists); err != nil {
+			return err
+		}
+		if exists > 0 {
+			continue
+		}
+
+		raw, err := migrations.ReadFile("migrations/" + name)
 		if err != nil {
 			return err
 		}
 		for _, stmt := range splitStatements(string(raw)) {
 			if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-				return fmt.Errorf("%s: %w", e.Name(), err)
+				// 1060 = 列已存在，1061 = 索引已存在。
+				// 发生在「版本表引入之前就手工执行过该迁移」的库上，视为已应用。
+				if isDupColumnOrKey(err) {
+					continue
+				}
+				return fmt.Errorf("%s: %w", name, err)
 			}
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`,
+			name, time.Now().UnixMilli()); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func isDupColumnOrKey(err error) bool {
+	var me *mysql.MySQLError
+	if !errors.As(err, &me) {
+		return false
+	}
+	return me.Number == 1060 || me.Number == 1061
 }
 
 // splitStatements 按分号切分，忽略注释行。DDL 里没有字符串内分号，够用。
@@ -528,19 +577,20 @@ func (s *Store) ListAudit(ctx context.Context, pairID model.ID, limit int) ([]mo
 // UpsertTask 是部分更新：空字符串 / NULL 不覆盖已有值。
 func (s *Store) UpsertTask(ctx context.Context, t model.Task) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO tasks (id, pair_id, workspace, workspace_mode, status, title,
+		`INSERT INTO tasks (id, pair_id, workspace, workspace_mode, status, title, session_id,
 		                    started_at, settled_at, exit_reason, blob_count)
-		 VALUES (?,?,?,?,?,?,?,?,?,?)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?)
 		 ON DUPLICATE KEY UPDATE
 		   workspace      = IF(VALUES(workspace) = '',      workspace,      VALUES(workspace)),
 		   workspace_mode = IF(VALUES(workspace_mode) = '', workspace_mode, VALUES(workspace_mode)),
 		   status         = IF(VALUES(status) = '',         status,         VALUES(status)),
 		   title          = IF(VALUES(title) = '',          title,          VALUES(title)),
+		   session_id     = IF(VALUES(session_id) = '',     session_id,     VALUES(session_id)),
 		   started_at     = COALESCE(VALUES(started_at), started_at),
 		   settled_at     = COALESCE(VALUES(settled_at), settled_at),
 		   exit_reason    = IF(VALUES(exit_reason) = '',    exit_reason,    VALUES(exit_reason)),
 		   blob_count     = IF(VALUES(blob_count) = 0,      blob_count,     VALUES(blob_count))`,
-		t.ID[:], t.PairID[:], t.Workspace, modeOrShared(t.WorkspaceMode), t.Status, t.Title,
+		t.ID[:], t.PairID[:], t.Workspace, modeOrShared(t.WorkspaceMode), t.Status, t.Title, t.SessionID,
 		nullInt(t.StartedAt), nullInt(t.SettledAt), t.ExitReason, t.BlobCount)
 	return wrap(err)
 }
@@ -552,9 +602,33 @@ func modeOrShared(mode string) string {
 	return mode
 }
 
+func (s *Store) TaskByID(ctx context.Context, id model.ID) (model.Task, error) {
+	var (
+		t                model.Task
+		rawID, rawPair   []byte
+		mode             string
+		started, settled sql.NullInt64
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, pair_id, workspace, workspace_mode, status, title, session_id,
+		        started_at, settled_at, exit_reason, blob_count
+		 FROM tasks WHERE id = ?`, id[:]).
+		Scan(&rawID, &rawPair, &t.Workspace, &mode, &t.Status, &t.Title, &t.SessionID,
+			&started, &settled, &t.ExitReason, &t.BlobCount)
+	if err != nil {
+		return model.Task{}, wrap(err)
+	}
+	copy(t.ID[:], rawID)
+	copy(t.PairID[:], rawPair)
+	t.WorkspaceMode = mode
+	t.StartedAt = toPtr(started)
+	t.SettledAt = toPtr(settled)
+	return t, nil
+}
+
 func (s *Store) TasksByPair(ctx context.Context, pairID model.ID, limit int) ([]model.Task, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, pair_id, workspace, workspace_mode, status, title,
+		`SELECT id, pair_id, workspace, workspace_mode, status, title, session_id,
 		        started_at, settled_at, exit_reason, blob_count
 		 FROM tasks WHERE pair_id = ? ORDER BY COALESCE(started_at, 0) DESC LIMIT ?`,
 		pairID[:], limit)
@@ -571,7 +645,7 @@ func (s *Store) TasksByPair(ctx context.Context, pairID model.ID, limit int) ([]
 			mode             string
 			started, settled sql.NullInt64
 		)
-		if err := rows.Scan(&rawID, &rawPair, &t.Workspace, &mode, &t.Status, &t.Title,
+		if err := rows.Scan(&rawID, &rawPair, &t.Workspace, &mode, &t.Status, &t.Title, &t.SessionID,
 			&started, &settled, &t.ExitReason, &t.BlobCount); err != nil {
 			return nil, wrap(err)
 		}

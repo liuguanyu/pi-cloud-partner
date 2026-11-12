@@ -53,6 +53,8 @@ export interface TaskView {
   pendingApproval?: ApprovalRequest;
   /** 队列位次（queued 时） */
   queuePosition?: number;
+  /** 是否已从磁盘拉取过完整历史 */
+  historyLoaded?: boolean;
 }
 
 export interface AppView {
@@ -66,6 +68,8 @@ export interface AppView {
 }
 
 interface MutableTask extends TaskView {
+  /** 已经从磁盘拉过完整历史 */
+  historyLoaded?: boolean;
   /** 本段助手消息的起始块下标；message_end 时整段按权威内容重建 */
   segmentStart?: number;
 }
@@ -146,6 +150,9 @@ export class TaskStore {
       case Up.taskCancelled:
       case Up.taskTitleUpdated:
         this.#applyTaskLifecycle(env);
+        break;
+      case Up.historyData:
+        this.#applyHistory(env);
         break;
       case Up.uiRequest:
         this.#applyUiRequest(env);
@@ -405,6 +412,33 @@ export class TaskStore {
     task.blocks.splice(task.segmentStart, task.blocks.length - task.segmentStart, ...rebuilt);
   }
 
+  // ── 内部：历史回放 ──────────────────────────────────────────
+
+  /**
+   * 历史是权威数据（来自磁盘会话文件），直接替换 blocks。
+   * 与实时流拼接的内容相比，它更完整、顺序更正确。
+   */
+  #applyHistory(env: Envelope): void {
+    const payload = (env.payload ?? {}) as {
+      taskId?: string;
+      blocks?: Block[];
+      missing?: boolean;
+      truncated?: boolean;
+    };
+    const taskId = payload.taskId ?? env.taskId;
+    if (!taskId) return;
+    const task = this.#task(taskId);
+
+    if (payload.missing) {
+      task.lastLine = task.lastLine || "（历史会话文件已不存在）";
+      return;
+    }
+    if (!Array.isArray(payload.blocks) || payload.blocks.length === 0) return;
+
+    task.blocks = payload.blocks.map((block) => ({ ...block }));
+    task.historyLoaded = true;
+  }
+
   // ── 内部：审批 ──────────────────────────────────────────────
 
   #applyUiRequest(env: Envelope): void {
@@ -465,6 +499,7 @@ export class TaskStore {
       if (task.exitReason !== undefined) copy.exitReason = task.exitReason;
       if (task.pendingApproval !== undefined) copy.pendingApproval = task.pendingApproval;
       if (task.queuePosition !== undefined) copy.queuePosition = task.queuePosition;
+      if (task.historyLoaded !== undefined) copy.historyLoaded = task.historyLoaded;
       tasks.push(copy);
       byId[copy.taskId] = copy;
     }

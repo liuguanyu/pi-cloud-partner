@@ -62,6 +62,10 @@ const (
 	TypeControlExec = "control.exec"
 	TypeResume      = "resume"
 	TypeUIResponse  = "ui.response"
+	// TypeHistoryGet 请求某任务的历史正文（正文在 bridge 磁盘）
+	TypeHistoryGet = "history.get"
+	// TypeHistoryData 是 history.get 的应答
+	TypeHistoryData = "history.data"
 
 	// 配对相关（cloud → mobile SSE）
 	TypePairApproved  = "pair.approved"

@@ -324,11 +324,13 @@ func (s *Server) trackTask(ctx context.Context, pairID model.ID, env protocol.En
 
 	var payload struct {
 		ExitReason string `json:"exitReason"`
+		SessionID  string `json:"sessionId"`
 	}
 	if len(env.Payload) > 0 {
 		_ = env.Decode(&payload)
 	}
 	exitReason = payload.ExitReason
+	sessionID := payload.SessionID
 
 	task := model.Task{
 		ID:         taskID,
@@ -336,6 +338,7 @@ func (s *Server) trackTask(ctx context.Context, pairID model.ID, env protocol.En
 		Status:     status,
 		ExitReason: exitReason,
 		Title:      title,
+		SessionID:  sessionID,
 	}
 	if status == "running" {
 		task.StartedAt = &now

@@ -396,6 +396,27 @@ export class AppController {
     }
   }
 
+  /**
+   * 拉取任务历史。只在「本地没有完整内容」时调用：
+   * 刷新后 / 隔天回来 / ring 已被云端丢弃的情况下，本地 blocks 是残缺或空的。
+   */
+  async loadHistory(taskId: string): Promise<void> {
+    const { pairToken, pairId } = this.#creds.load();
+    if (!pairToken || !pairId) return;
+    const task = this.store.snapshot().byId[taskId];
+    if (task?.historyLoaded) return;
+    try {
+      await this.#api.history(pairToken, pairId, taskId);
+      // 应答走 SSE（history.data），不在这里等
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "no_session") {
+        // 老任务没有 sessionId（该字段是后加的），静默降级
+        return;
+      }
+      throw error;
+    }
+  }
+
   async refreshWorkspaces(): Promise<void> {
     const { pairToken } = this.#creds.load();
     if (pairToken) await this.#refreshWorkspaces(pairToken);

@@ -20,6 +20,7 @@ export interface BridgeApi {
     answer(approval: UiRequestPayload & { taskId: string }, decision: "approve" | "deny" | { value: unknown }): Promise<void>;
     revokePair(): Promise<void>;
     signOut(): Promise<void>;
+    loadHistory(taskId: string): Promise<void>;
     refreshWorkspaces(): Promise<void>;
   };
 }
@@ -62,6 +63,7 @@ export function useBridge(): BridgeApi {
       answer: (approval, decision) => app.answerApproval(approval, decision),
       revokePair: () => app.revokePair(),
       signOut: () => app.signOut(),
+      loadHistory: (taskId) => app.loadHistory(taskId),
       refreshWorkspaces: () => app.refreshWorkspaces(),
     },
   };

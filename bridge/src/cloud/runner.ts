@@ -46,6 +46,15 @@ export interface TaskRequest {
 
 type TaskState = "queued" | "running" | "awaiting_approval" | "settled" | "failed" | "cancelled";
 
+interface HistoryRequest {
+  taskId: string;
+  sessionId: string;
+  /** 回包必须带它：daemon 重启后本地已不知道旧任务属于哪个 pair，猜不出来 */
+  pairId: string;
+  /** 只取该时间点之后的消息（任务开始时间） */
+  sinceMs?: number;
+}
+
 interface RunningTask {
   req: TaskRequest;
   workspace: string;
@@ -75,6 +84,8 @@ export class Runner {
   #childSeq = 0;
   #focusedTaskId: string | null = null;
   #uiOwner = new Map<string, Child>();
+  /** 最近一次见到的 pairId，用于给已结束任务补上行帧的归属 */
+  #lastPairId: string | undefined;
   #settleWaiters = new Map<string, () => void>();
   #recycler: ReturnType<typeof setInterval> | null = null;
   #closed = false;
@@ -152,6 +163,44 @@ export class Runner {
     return true;
   }
 
+  /**
+   * 读取某任务的历史正文。
+   *
+   * 云端不存正文，只存 sessionId；这里回到磁盘读 pi 写的 JSONL。
+   * 所以即使 daemon 重启、云端 ring 清空，昨天的任务依然可回看。
+   */
+  async history(req: HistoryRequest): Promise<void> {
+    const { loadSessionHistory } = await import("./history.ts");
+    const result = await loadSessionHistory(req.sessionId, {
+      sessionDir: this.#opts.sessionDir,
+      sinceMs: req.sinceMs,
+    });
+    this.#opts.log("历史读取", {
+      taskId: req.taskId,
+      blocks: result.blocks.length,
+      missing: Boolean(result.missing),
+    });
+    this.#opts.onUp(
+      envelope(Up.historyData, {
+        pairId: req.pairId || this.#pairIdFor(req.taskId),
+        taskId: req.taskId,
+        payload: {
+          taskId: req.taskId,
+          blocks: result.blocks,
+          ...(result.missing ? { missing: true } : {}),
+          ...(result.truncated ? { truncated: true } : {}),
+        },
+      }),
+    );
+  }
+
+  /** 历史请求可能针对已结束的任务，此时从「最近见过的任务」里找回 pairId。 */
+  #pairIdFor(taskId: string): string | undefined {
+    const running = this.#running.get(taskId);
+    if (running) return running.req.pairId;
+    return this.#lastPairId;
+  }
+
   /** 处理控制面命令（/resume /new /fork …）。 */
   async control(name: string, args: string[], raw: string): Promise<ControlResult> {
     const child = this.#anyChild();
@@ -224,6 +273,7 @@ export class Runner {
       return;
     }
 
+    this.#lastPairId = req.pairId;
     const task: RunningTask = {
       req,
       workspace,
@@ -246,6 +296,12 @@ export class Runner {
 
     try {
       const state = await child.client.getState();
+      // 把 sessionId 报给云端：历史回看要靠它定位磁盘上的 JSONL，
+      // 且必须落库——否则 daemon 重启后就没法回看旧任务了。
+      const sessionId = typeof state.sessionId === "string" ? state.sessionId : "";
+      if (sessionId) {
+        this.#emit(task, Up.taskStarted, { ...this.#taskPayload(task), sessionId });
+      }
       const streaming = Boolean(state.isStreaming);
       const accepted = await child.client.prompt(
         req.prompt,

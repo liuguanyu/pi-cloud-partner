@@ -182,6 +182,27 @@ CREATE TABLE blobs (
 
 **保留策略**：audit 90 天 / tasks 摘要 30 天 / blobs 7 天（定时 GC）/ 会话正文云端永不存。
 
+## 7.1 历史回看（正文不落云的前提下）
+
+会话正文只在 bridge 磁盘（pi 写的 JSONL）。云端只存 `tasks.session_id`，
+手机打开任务详情时：
+
+```
+手机 POST /api/history {taskId}
+  → 云端查 session_id，下发 history.get（带 pairId 与任务起始时间）
+  → bridge 按 sessionId 定位 JSONL，按 sinceMs 裁剪，回 history.data
+  → 云端转发到 SSE → 手机替换该任务的 blocks
+```
+
+三个必须注意的点（都踩过）：
+
+1. **必须按任务起始时间裁剪**：pi 的会话按 workspace 续用，同一目录下多个任务共享
+   一个 session；不裁剪会把之前几轮一并返回，"回看这个任务"变成"回看整段会话"。
+2. **回包必须回显请求里的 pairId**：daemon 重启后本地已不知道旧任务属于哪个 pair，
+   靠本地状态猜会丢帧（云端会以 "frame without usable pairId" 丢弃）。
+3. **游标不要持久化**：游标的前提是客户端仍持有对应状态；刷新后 store 是空的，
+   带旧游标反而让云端一条都不回放。
+
 ## 7. 协议索引
 
 | 文件 | 内容 |

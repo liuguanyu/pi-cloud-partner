@@ -183,6 +183,22 @@ async function main(): Promise<void> {
         return;
       }
 
+      case Down.historyGet: {
+        const payload = (env.payload ?? {}) as { taskId?: string; sessionId?: string; sinceMs?: number };
+        if (payload.taskId && payload.sessionId) {
+          await runner.history({
+            taskId: payload.taskId,
+            sessionId: payload.sessionId,
+            sinceMs: payload.sinceMs,
+            // 回显请求方给的 pairId：daemon 重启后本地不认识旧任务
+            pairId: env.pairId ?? "",
+          });
+        } else {
+          log("history.get 缺字段，忽略", { taskId: payload.taskId });
+        }
+        return;
+      }
+
       case Down.resume:
         // M2：云端自己维护 ring buffer 负责回放，桥接侧暂不处理深缺口
         log("resume 已忽略（云端 ring buffer 负责回放）");

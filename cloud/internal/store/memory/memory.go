@@ -345,6 +345,9 @@ func (s *Store) UpsertTask(_ context.Context, t model.Task) error {
 		if t.Title == "" {
 			t.Title = old.Title
 		}
+		if t.SessionID == "" {
+			t.SessionID = old.SessionID
+		}
 		if t.StartedAt == nil {
 			t.StartedAt = old.StartedAt
 		}
@@ -360,6 +363,16 @@ func (s *Store) UpsertTask(_ context.Context, t model.Task) error {
 	}
 	s.tasks[t.ID] = t
 	return nil
+}
+
+func (s *Store) TaskByID(_ context.Context, id model.ID) (model.Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return model.Task{}, store.ErrNotFound
+	}
+	return t, nil
 }
 
 func (s *Store) TasksByPair(_ context.Context, pairID model.ID, limit int) ([]model.Task, error) {

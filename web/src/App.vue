@@ -40,10 +40,27 @@ const sseLabel = computed(
     })[state.value.sseStatus],
 );
 
-watch(activeTaskId, (taskId) => {
-  // 告诉 bridge 当前聚焦谁，决定推全量 delta 还是只推摘要
-  void actions.focusTask(taskId);
-});
+watch(
+  activeTaskId,
+  (taskId) => {
+    // 告诉 bridge 当前聚焦谁，决定推全量 delta 还是只推摘要
+    void actions.focusTask(taskId);
+  },
+  { immediate: true },
+);
+
+// 详情页打开后，如果本地内容不完整就去磁盘拉一次历史。
+// 判据用「blocks 为空」而不是「任务已结束」：云端重启会清空 ring，
+// 进行中的任务同样会变成"本地什么都没有"，此时更应该显示磁盘上的真实进度。
+watch(
+  () => activeTask.value,
+  (task) => {
+    if (!task) return;
+    if (task.historyLoaded) return;
+    if (task.blocks.length > 0) return;
+    void run(() => actions.loadHistory(task.taskId));
+  },
+);
 
 onMounted(() => {
   bootstrap();
