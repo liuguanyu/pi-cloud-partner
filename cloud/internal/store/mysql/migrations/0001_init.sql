@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS devices (
 CREATE TABLE IF NOT EXISTS pairs (
     id               BINARY(16) NOT NULL,
     device_id        BINARY(16) NOT NULL,
-    user_id          BINARY(16) NOT NULL,
+    -- claim 之前还不知道是哪台手机，允许 NULL（SetPairUser 在 claim 时补上）
+    user_id          BINARY(16) NULL,
     status           ENUM('requested','pending_approval','active','suspended',
                           'revoked','rejected','expired') NOT NULL,
     created_at       BIGINT     NOT NULL,

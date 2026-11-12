@@ -132,7 +132,8 @@ CREATE TABLE devices (                          -- 一台 bridge；故意不带 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE pairs (
-  id BINARY(16) NOT NULL, device_id BINARY(16) NOT NULL, user_id BINARY(16) NOT NULL,
+  id BINARY(16) NOT NULL, device_id BINARY(16) NOT NULL,
+  user_id BINARY(16) NULL,                       -- claim 前未知，claim 时绑定
   status ENUM('requested','pending_approval','active','suspended','revoked','rejected','expired') NOT NULL,
   created_at BIGINT NOT NULL, approved_at BIGINT NULL, revoked_at BIGINT NULL,
   revoked_by ENUM('mobile','device','admin','system') NULL,
@@ -202,7 +203,7 @@ CREATE TABLE blobs (
 | **M1 配对 + 只读** | cloud pairing/ws-hub/sse-hub + `web/m` 只读 | ✅ **后端已完成并本地验证**：`go test ./...` 10 用例绿；实机 11 步流程确认「未批准换 token→403、手机自我批准→401、bridge 离线→503、撤销后 pairToken→401」；MySQL 生成列唯一约束实测拒绝第二个 active pair。`web/m` 前端已完成：Vue3+Vite，手机端真机（Playwright）走通「粘贴令牌 → 输入配对码 → 等批准 → 建任务 → 审批弹层 → 落盘」全流程 |
 | **M2 上行 + 审批** | `task.start/input`、`ui.response`、`control.exec` | ✅ **已端到端跑通**：手机下发任务 → 云 → bridge → pi → write 工具 → 审批经 SSE 回手机 → 批准后落盘 → `task.settled`。**剩余**：`/resume` 的 epoch 跳变校验、审批超时路径实测、worktree 隔离 |
 | **M3 并行 + 稳健** | workspace 锁、worktree、断线续传、容量 | 2 任务并行互不干扰；同 repo worktree 隔离（改文件不互相影响）；断网 60s 重连后 seq 连续无缺口；第 3 个任务显示排队位次 |
-| **M4 推广** | 多设备、审计导出、blob GC、部署脚本 | 一台手机管 2 台 PC；blob 过期自动清理；`launchd`/`systemd` 开机自启并通过自检脚本 |
+| **M4 推广** | 多设备、审计导出、blob GC、launchd 常驻 | 云端 `pcpd.service` 已上线（systemd 常驻）；**剩余**：一台手机管多台 PC、blob GC、本机 daemon 的 launchd |
 
 ## 9. 风险登记
 
@@ -224,3 +225,6 @@ CREATE TABLE blobs (
 1. 在**目标内网机器**执行 `node tools/egress-probe.mjs --host <云域名> --wss-path /ws/bridge --idle 120`，确认进程直连可行（否则切 D1 的备选方案）
 2. 确定云域名（自签也可先跑通）、MySQL 实例、对象存储位置
 3. 登录方式若沿用长期 token，可先跑通链路，M1 末尾再补账号体系
+
+**2026-11-12 已上线**：`https://lab.leon82.com`（Go 服务 systemd 常驻 + Vue 静态站 + WSS/SSE 经 nginx）。
+生产环境真机（Playwright）走通：粘贴令牌 → 配对码 → PC 批准 → 建任务 → 审批弹层 → 本机落盘 → settled。
