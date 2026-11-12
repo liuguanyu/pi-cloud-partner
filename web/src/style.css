@@ -1,0 +1,87 @@
+:root {
+  --bg: #0d1117;
+  --bg-soft: #161b22;
+  --bg-raise: #1f2630;
+  --line: #2d3742;
+  --fg: #e6edf3;
+  --fg-dim: #8b949e;
+  --accent: #4c9aff;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --err: #f85149;
+  --radius: 10px;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--line);
+  background: var(--bg-raise);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:not(:disabled):active { background: #2a3340; }
+
+input, textarea, select {
+  font: inherit;
+  color: inherit;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 11px 12px;
+  width: 100%;
+  outline: none;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+
+textarea { resize: none; }
+
+.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06121f;
+  font-weight: 600;
+}
+
+.danger { color: var(--err); border-color: #4a2224; }
+.muted { color: var(--fg-dim); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.pill[data-status="running"] { color: var(--accent); border-color: #1f3d63; background: #12233a; }
+.pill[data-status="queued"] { color: var(--warn); border-color: #4a3a13; background: #2a2312; }
+.pill[data-status="awaiting_approval"] { color: #f0883e; border-color: #5a3a17; background: #33220f; }
+.pill[data-status="settled"] { color: var(--ok); border-color: #1c3b24; background: #12261a; }
+.pill[data-status="failed"], .pill[data-status="cancelled"] { color: var(--err); border-color: #4a2224; background: #2a1416; }
+
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fg-dim); }
+.dot[data-on="true"] { background: var(--ok); box-shadow: 0 0 0 3px rgba(63,185,80,0.15); }

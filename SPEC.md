@@ -199,7 +199,7 @@ CREATE TABLE blobs (
 | 里程碑 | 内容 | 验收（可测） |
 |---|---|---|
 | **M0 本地冒烟** | bridge 帧层 + 审批扩展 + 会话枚举，CLI 驱动 | ✅ **已完成**：发 prompt 看到 delta；abort 114ms 生效（`aborted=true`）；审批拒绝阻断 `write`、放行则落盘；`pwd` 免审批而 `echo >` 需审批；`/sessions` 列表正确；跨目录 `/resume` 重建子进程后 `pwd` 跟随；空闲 RSS ≈184MB、冷启动 ≈490ms |
-| **M1 配对 + 只读** | cloud pairing/ws-hub/sse-hub + `web/m` 只读 | ✅ **后端已完成并本地验证**：`go test ./...` 10 用例绿；实机 11 步流程确认「未批准换 token→403、手机自我批准→401、bridge 离线→503、撤销后 pairToken→401」；MySQL 生成列唯一约束实测拒绝第二个 active pair。**待办**：`web/m` 前端 |
+| **M1 配对 + 只读** | cloud pairing/ws-hub/sse-hub + `web/m` 只读 | ✅ **后端已完成并本地验证**：`go test ./...` 10 用例绿；实机 11 步流程确认「未批准换 token→403、手机自我批准→401、bridge 离线→503、撤销后 pairToken→401」；MySQL 生成列唯一约束实测拒绝第二个 active pair。`web/m` 前端已完成：Vue3+Vite，手机端真机（Playwright）走通「粘贴令牌 → 输入配对码 → 等批准 → 建任务 → 审批弹层 → 落盘」全流程 |
 | **M2 上行 + 审批** | `task.start/input`、`ui.response`、`control.exec` | ✅ **已端到端跑通**：手机下发任务 → 云 → bridge → pi → write 工具 → 审批经 SSE 回手机 → 批准后落盘 → `task.settled`。**剩余**：`/resume` 的 epoch 跳变校验、审批超时路径实测、worktree 隔离 |
 | **M3 并行 + 稳健** | workspace 锁、worktree、断线续传、容量 | 2 任务并行互不干扰；同 repo worktree 隔离（改文件不互相影响）；断网 60s 重连后 seq 连续无缺口；第 3 个任务显示排队位次 |
 | **M4 推广** | 多设备、审计导出、blob GC、部署脚本 | 一台手机管 2 台 PC；blob 过期自动清理；`launchd`/`systemd` 开机自启并通过自检脚本 |

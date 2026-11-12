@@ -288,6 +288,26 @@ func (s *Server) handleTaskList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": out})
 }
 
+// handleWorkspaces 返回 bridge 上报的 workspace 白名单，供手机端做选择器。
+// 手机不知道本机目录结构，没有这个接口就只能让用户手打绝对路径。
+func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
+	pair, err := s.requirePairToken(r, r.URL.Query().Get("pairId"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	bridge, online := s.cfg.Hub.Bridge(pair.DeviceID)
+	if !online {
+		writeJSON(w, http.StatusOK, map[string]any{"online": false, "workspaces": []string{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"online":     true,
+		"workspaces": bridge.Workspaces(),
+		"capacity":   bridge.Capacity(),
+	})
+}
+
 // ── 小工具 ────────────────────────────────────────────────────
 
 func containsPath(allowed []string, want string) bool {

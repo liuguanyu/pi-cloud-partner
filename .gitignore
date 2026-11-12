@@ -16,6 +16,13 @@ credentials*.json
 .env
 .env.*
 
+# Playwright 调试产物
+.playwright-mcp/
+
+# 前端构建
+web/dist/
+web/node_modules/
+
 # 编辑器 / 系统
 .DS_Store
 .idea/
