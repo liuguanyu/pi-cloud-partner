@@ -83,6 +83,17 @@ RPC 子进程默认解析到的是 `zyuncs/openai/gpt-5.6-sol-cpr`，而这个 p
 1. **空 assistant 消息不代表模型无输出**，一定要展开 `stopReason` / `errorMessage`，否则会误判成"没反应"。
 2. bridge 上线后应**显式配置模型**，不要靠默认值——否则可能静默跑到一个无凭据的模型上。
 
+## 配对（PC 侧，日常就这一条命令）
+
+```bash
+cd bridge
+npm run pair                # 生成配对码 → 等手机认领 → 问你要不要批准
+npm run pair -- --takeover  # 已有设备在控制时，顶替它
+```
+
+为什么需要它：**批准只能由 PC 侧发起**（云端无权批准）。这个命令用 `deviceToken`
+申请配对码、轮询等待、再由本机发 approve —— 就是"人在电脑前点允许"那一下。
+
 ## 连云（daemon）
 
 ```bash

@@ -9,7 +9,9 @@
   },
   "scripts": {
     "smoke": "node src/cli.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pair": "node src/pair.ts",
+    "daemon": "node src/daemon.ts"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^1.5.2",
