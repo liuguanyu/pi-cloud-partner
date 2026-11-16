@@ -20,6 +20,7 @@
 | pairId → PC 连接路由 | ✗ | **权威**（Redis） | ✗ |
 | pairToken | **持有** | 签发 + 校验 | **持有** |
 | approve / reject | ✗ | ✗（**不允许**） | **唯一有权** |
+| pair.user_id | — | approve 时用**设备主人**补齐 | 设备主人在首次批准时确定 |
 | revoke | 可（单方面） | 可（管理/风控） | 可（单方面） |
 
 设计意图：云被攻破无法伪造授权；配对码被猜中无法提权（只让你进待批列表）；手机丢失任一方可单方面断开。
@@ -55,10 +56,18 @@ POST /pair/request           Authorization: Device <deviceToken>
 ### 3.2 认领（手机侧）
 
 ```
-POST /pair/claim             Authorization: Bearer <mobileAuth>
-{ code, deviceName, platform }
-→ 200 { pairId, status: "pending_approval" }
+POST /pair/claim             # 无需鉴权（L1）
+{ code, deviceName, platform, claimantId }
+→ 200 { pairId, status: "pending_approval", refreshToken }
 ```
+
+**L1 的授权模型：手机不登录，授权完全发生在 PC 侧的 approve。**
+
+`claimantId` 是手机自己生成并持久化的随机串（不代表身份），只用于两件事：
+同一个 claimantId 重试 → 幂等；不同 claimantId 来抢码 → `409 already_claimed`。
+
+claim 返回的 `refreshToken` 在配对生效前**用不了**（`/api/session` 会返回 403），
+所以提前签发不构成越权。
 
 校验顺序（任一失败即拒，且计入限速）：
 
@@ -157,8 +166,25 @@ GET /pair/current            → { pairId, status, mobile:{deviceName,lastSeen},
 | bridge 换机器（deviceId 变） | ✅ |
 | 长期离线（默认 >30 天，可配） | ✅ |
 
+## 7.1 手机不登录，PC 是信任锚（L1）
+
+原设计里 `claim` 需要手机持有登录凭据。实际使用中发现这等于"用 SSH 手动发令牌"，
+因为 M1 没有账号体系。所以 L1 改成：
+
+```
+PC（持有 deviceToken，落盘 0600）→ 生成配对码 → 人在页面上点「允许」
+                                        ↓
+                          云端用**设备主人**身份给这台手机签发访问权
+```
+
+设备主人在首次批准时自动创建并绑定（`devices.owner_user_id`）。
+安全边界没有变弱：真正拦住陌生人的是 PC 上那一下点击，而不是手机侧的一串令牌。
+
+保留的加固项：approve 页面显示来源 IP，供人判断是不是自己那台手机。
+
 ## 8. 安全边界（明确不做的事）
 
 - 云端**不提供**「远程批准」API——没有 approve 的 HTTP 端点供手机或管理后台调用。
 - 配对码**不承载**任何权限，仅用于 claim。
+- 手机侧**不存长期身份凭据**：只有 pair 级的 refreshToken，断链即失效。
 - 不做 E2E 加密：云端需解析事件以支持持久化、快照、大产物索引（已确认允许存储内容）。

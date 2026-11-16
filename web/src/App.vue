@@ -10,16 +10,35 @@ import { bootstrap, useBridge } from "./composables/useBridge.ts";
 import PairingView from "./views/PairingView.vue";
 import TaskListView from "./views/TaskListView.vue";
 import TaskDetailView from "./views/TaskDetailView.vue";
+import DeviceView from "./views/DeviceView.vue";
 import type { UiRequestPayload } from "@wire";
+
+/**
+ * 本地控制台模式（/device）。
+ *
+ * 双重判定，缺一不可：
+ *   1. hostname 必须是回环地址 —— 公网域名下即使手动访问 #/device 也不渲染
+ *   2. hash 为 #/device
+ * 这样"设备端页面"不可能被外网访问到（它本来也只由 bridge 在本地提供）。
+ */
+const isLoopback = ["127.0.0.1", "localhost", "::1"].includes(location.hostname);
+const deviceMode = ref(isLoopback && (location.hash === "#/device" || location.pathname === "/device"));
 
 const { state, actions } = useBridge();
 
 const route = ref<string>(location.hash || "#/");
+
+/**
+ * 扫码链接形如 https://host/m?code=ABC123。
+ * 读出码预填到配对页，然后把 query 从地址栏抹掉 —— 否则刷新会拿一个已用过的码重填。
+ */
+const initialPairCode = ref<string>(new URLSearchParams(location.search).get("code") ?? "");
 const busy = ref(false);
 const actionError = ref<string | undefined>(undefined);
 
 window.addEventListener("hashchange", () => {
   route.value = location.hash || "#/";
+  deviceMode.value = isLoopback && (location.hash === "#/device" || location.pathname === "/device");
 });
 
 const activeTaskId = computed(() => {
@@ -63,7 +82,12 @@ watch(
 );
 
 onMounted(() => {
-  bootstrap();
+  if (initialPairCode.value) {
+    const cleaned = location.pathname + location.hash;
+    window.history.replaceState(null, "", cleaned);
+  }
+  // 本地控制台不需要配对凭据，别去跑手机端的 bootstrap
+  if (!deviceMode.value) bootstrap();
 });
 
 function go(hash: string): void {
@@ -99,6 +123,10 @@ async function handleAnswer(
 
 <template>
   <div class="app">
+    <!-- 设备端页面独立成支，不与手机端共用任何 header/状态 -->
+    <DeviceView v-if="deviceMode" />
+
+    <template v-else>
     <header v-if="state.phase === 'ready'">
       <button v-if="activeTaskId" class="back" @click="go('#/')">←</button>
       <div class="brand">
@@ -114,12 +142,12 @@ async function handleAnswer(
     </div>
 
     <PairingView
-      v-if="state.phase === 'need-token' || state.phase === 'need-pair' || state.phase === 'waiting-approval'"
+      v-if="state.phase === 'need-pair' || state.phase === 'waiting-approval'"
       :phase="state.phase"
       :pairs="state.pairs"
       :error="actionError ?? state.error"
       :busy="busy"
-      @submit-token="(token) => run(() => actions.submitUserToken(token))"
+      :initial-code="initialPairCode"
       @claim="(code, name) => run(() => actions.claim(code, name))"
     />
 
@@ -127,7 +155,7 @@ async function handleAnswer(
 
     <div v-else-if="state.phase === 'error'" class="booting">
       <p class="error">{{ state.error }}</p>
-      <button @click="run(() => actions.submitUserToken(state.credentials.userToken ?? ''))">重试</button>
+      <button @click="run(() => actions.unpair())">重新配对</button>
     </div>
 
     <template v-else>
@@ -153,6 +181,7 @@ async function handleAnswer(
         @create="handleCreate"
         @open="(taskId) => go(`#/t/${encodeURIComponent(taskId)}`)"
       />
+    </template>
     </template>
   </div>
 </template>

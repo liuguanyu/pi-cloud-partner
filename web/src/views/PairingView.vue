@@ -5,7 +5,7 @@
  *   need-pair         输入 6 位配对码
  *   waiting-approval  等待 PC 上的人批准
  */
-import { computed, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import type { Phase } from "../core/app.ts";
 import type { PairView } from "../core/api.ts";
 
@@ -14,14 +14,14 @@ const props = defineProps<{
   pairs: PairView[];
   error?: string;
   busy?: boolean;
+  /** 扫码进来时 URL 里带的码，直接预填 */
+  initialCode?: string;
 }>();
 
 const emit = defineEmits<{
-  submitToken: [token: string];
   claim: [code: string, deviceName: string];
 }>();
 
-const tokenInput = ref("");
 const codeInput = ref("");
 const deviceName = ref(defaultDeviceName());
 
@@ -34,37 +34,26 @@ function defaultDeviceName(): string {
 }
 
 const codeReady = computed(() => codeInput.value.trim().length === 6);
+
+function applyInitialCode(value: string | undefined): void {
+  const trimmed = (value ?? "").trim().toUpperCase();
+  if (trimmed.length === 6) codeInput.value = trimmed;
+}
+
+onMounted(() => applyInitialCode(props.initialCode));
+// 扫码进来时 App 可能比子组件晚拿到 URL 参数
+watch(() => props.initialCode, applyInitialCode);
 </script>
 
 <template>
   <main class="wrap">
-    <section v-if="props.phase === 'need-token'">
-      <h1>连接你的 pi</h1>
-      <p class="muted">
-        输入访问令牌。当前阶段（M1）还没有账号体系，令牌由云端
-        <code class="mono">pcpd user create</code> 生成。
-      </p>
-      <input
-        v-model="tokenInput"
-        class="mono"
-        placeholder="userToken"
-        autocapitalize="off"
-        autocorrect="off"
-        spellcheck="false"
-      />
-      <button class="primary wide" :disabled="!tokenInput.trim() || props.busy" @click="emit('submitToken', tokenInput)">
-        继续
-      </button>
-      <p v-if="props.error" class="error">{{ props.error }}</p>
-    </section>
-
-    <section v-else-if="props.phase === 'need-pair'">
+    <section v-if="props.phase === 'need-pair'">
       <h1>输入配对码</h1>
       <p class="muted">在运行 pi 的那台电脑上打开控制台，生成 6 位配对码。</p>
       <input
         v-model="codeInput"
         class="code mono"
-        placeholder="A1B2C3"
+        placeholder="六位配对码"
         maxlength="6"
         autocapitalize="characters"
         autocorrect="off"
@@ -109,8 +98,26 @@ input { margin-bottom: 12px; }
   text-align: center;
   padding: 14px;
 }
+/* 占位符必须明显区别于真实输入，否则用户以为已经填好了 */
+.code::placeholder {
+  font-size: 15px;
+  letter-spacing: normal;
+  color: var(--fg-dim);
+  opacity: 0.55;
+}
 .wide { width: 100%; }
 .error { color: var(--err); font-size: 13px; margin-top: 12px; }
+.error.small { font-size: 12px; }
+.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  font-size: inherit;
+  cursor: pointer;
+}
+.link.subtle { color: var(--fg-dim); font-size: 12px; margin-top: 14px; }
 .hint { font-size: 12px; margin-top: 12px; }
 .pending {
   display: flex;

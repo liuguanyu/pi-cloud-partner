@@ -13,6 +13,9 @@ type claimBody struct {
 	Code       string `json:"code"`
 	DeviceName string `json:"deviceName"`
 	Platform   string `json:"platform"`
+	// ClaimantID 由手机生成并持久化，用于 claim 幂等与抢码判定。
+	// 手机不再需要登录，所以这是唯一能区分"同一台手机重试"的标识。
+	ClaimantID string `json:"claimantId"`
 }
 
 type approveBody struct {
@@ -58,12 +61,6 @@ func (s *Server) handlePairClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.requireUser(r)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-
 	var body claimBody
 	if err := decode(r, &body); err != nil {
 		s.fail(w, err)
@@ -77,7 +74,12 @@ func (s *Server) handlePairClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := s.cfg.Pairing.Claim(r.Context(), user.ID, body.Code, body.DeviceName)
+	res, err := s.cfg.Pairing.Claim(r.Context(), pairing.ClaimInput{
+		Code:       body.Code,
+		ClaimantID: body.ClaimantID,
+		IP:         ip,
+		DeviceName: body.DeviceName,
+	})
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -90,6 +92,7 @@ func (s *Server) handlePairClaim(w http.ResponseWriter, r *http.Request) {
 			"pairId":     res.PairID,
 			"deviceName": body.DeviceName,
 			"platform":   body.Platform,
+			"claimIp":    ip,
 		})
 		env.PairID = res.PairID
 		_ = s.cfg.Hub.Send(pc.DeviceID, env)
@@ -183,9 +186,30 @@ func (s *Server) handlePairRevoke(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, err)
 			return
 		}
-	} else if user, uerr := s.requireUser(r); uerr == nil {
-		if err := s.cfg.Pairing.Revoke(r.Context(), pairID, "mobile", user.ID); err != nil {
-			s.fail(w, err)
+	} else if plain, ok := authBearer(r); ok {
+		// 手机：既接受 refreshToken（L1 常态），也接受 user 凭据（将来有登录时）
+		tok, terr := s.cfg.Store.TokenByHash(r.Context(), auth.Hash(plain))
+		if terr != nil || tok.Revoked() || tok.Expired(s.cfg.Now()) {
+			s.fail(w, errUnauthorized)
+			return
+		}
+		switch tok.Kind {
+		case model.TokenRefresh:
+			if tok.SubjectID != pairID {
+				s.fail(w, errUnauthorized)
+				return
+			}
+			if err := s.cfg.Pairing.Revoke(r.Context(), pairID, "mobile", model.ID{}); err != nil {
+				s.fail(w, err)
+				return
+			}
+		case model.TokenUser:
+			if err := s.cfg.Pairing.Revoke(r.Context(), pairID, "mobile", tok.SubjectID); err != nil {
+				s.fail(w, err)
+				return
+			}
+		default:
+			s.fail(w, errUnauthorized)
 			return
 		}
 	} else {
@@ -212,13 +236,25 @@ func (s *Server) handlePairCurrent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.requireUser(r)
-	if err != nil {
-		s.fail(w, err)
-		return
+	// 手机端：用 refreshToken 查自己这个 pair 的状态（L1 没有用户登录）
+	if plain, ok := authBearer(r); ok {
+		tok, err := s.cfg.Store.TokenByHash(r.Context(), auth.Hash(plain))
+		if err == nil && !tok.Revoked() && !tok.Expired(s.cfg.Now()) {
+			if tok.Kind == model.TokenRefresh {
+				pair, err := s.cfg.Store.PairByID(r.Context(), tok.SubjectID)
+				if err == nil {
+					writeJSON(w, http.StatusOK, map[string]any{"pairs": s.pairViews(r, []model.Pair{pair})})
+					return
+				}
+			}
+			if tok.Kind == model.TokenUser {
+				pairs, _ := s.cfg.Store.PairsByUser(r.Context(), tok.SubjectID)
+				writeJSON(w, http.StatusOK, map[string]any{"pairs": s.pairViews(r, pairs)})
+				return
+			}
+		}
 	}
-	pairs, _ := s.cfg.Store.PairsByUser(r.Context(), user.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"pairs": s.pairViews(r, pairs)})
+	s.fail(w, errUnauthorized)
 }
 
 // handleSession：refreshToken 换 12h pairToken（幂等，可反复换）。
@@ -277,6 +313,9 @@ func (s *Server) pairViews(r *http.Request, pairs []model.Pair) []map[string]any
 		}
 		if p.RevokedBy != "" {
 			view["revokedBy"] = p.RevokedBy
+		}
+		if p.ClaimIP != "" {
+			view["claimIp"] = p.ClaimIP
 		}
 		if dev, err := s.cfg.Store.DeviceByID(r.Context(), p.DeviceID); err == nil {
 			view["device"] = map[string]any{

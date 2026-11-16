@@ -20,6 +20,7 @@ import { CloudClient, type CloudStatus } from "./cloud/client.ts";
 import { loadConfig, loadCredentials } from "./cloud/config.ts";
 import { Down, Up, envelope, type Envelope } from "./cloud/protocol.ts";
 import { Runner, type TaskRequest } from "./cloud/runner.ts";
+import { startConsole, type ConsoleHandle } from "./local/console.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APPROVAL_EXTENSION = resolve(HERE, "..", "extensions", "approval.ts");
@@ -225,12 +226,32 @@ async function main(): Promise<void> {
   // 启动即上报一次容量，手机端好显示 0/2
   client.send(envelope(Up.capacity, { payload: runner.capacity() }));
 
+  let consoleHandle: ConsoleHandle | null = null;
+  if (cfg.deviceConsolePort > 0) {
+    consoleHandle = await startConsole({
+      port: cfg.deviceConsolePort,
+      distDir: cfg.deviceConsoleDist ?? resolve(HERE, "..", "..", "web", "dist"),
+      serverUrl: cfg.serverUrl,
+      deviceToken: creds.deviceToken,
+      deviceName: cfg.name,
+      status: () => ({
+        online: client.status === "online",
+        deviceId: creds.deviceId,
+        capacity: runner.capacity(),
+        pairs: client.welcome?.pairIds.length ?? 0,
+      }),
+      log,
+    });
+    log("打开本地控制台", { url: consoleHandle.url });
+  }
+
   let stopping = false;
   const shutdown = async (signal: string) => {
     if (stopping) return;
     stopping = true;
     log(`收到 ${signal}，正在关闭`);
     client.stop();
+    await consoleHandle?.close();
     await runner.shutdown();
     process.exit(0);
   };

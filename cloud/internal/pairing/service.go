@@ -164,7 +164,22 @@ func (s *Service) Request(ctx context.Context, deviceID, userID model.ID) (Reque
 // 硬拒绝规则（protocol/pairing.md §3.2）：
 //   - 码被别的手机抢过 → ErrAlreadyClaimed，不做覆盖，同时记 pair.contested 审计
 //   - device 已有 active pair 且未启用顶替 → ErrDeviceBusy
-func (s *Service) Claim(ctx context.Context, userID model.ID, code, deviceName string) (ClaimResult, error) {
+//
+// ClaimInput 是认领所需的全部输入。
+//
+// L1 起手机**不需要登录**：认领者身份由手机自己生成的 claimantId 表示，
+// 真正的授权仍然只在 PC 侧的 Approve 那一下。claimantId 只用于
+// 「同一台手机重试是幂等的」与「别的手机来抢码要拒绝」。
+type ClaimInput struct {
+	Code       string
+	ClaimantID string
+	IP         string
+	DeviceName string
+}
+
+func (s *Service) Claim(ctx context.Context, in ClaimInput) (ClaimResult, error) {
+	code := in.Code
+	claimant := strings.TrimSpace(in.ClaimantID)
 	now := s.now()
 	normalized := NormalizeCode(code)
 
@@ -184,22 +199,19 @@ func (s *Service) Claim(ctx context.Context, userID model.ID, code, deviceName s
 
 	switch pair.Status {
 	case model.PairRequested:
-		// 首次认领：request 阶段还没有手机身份，这里补上
-		if !pair.UserID.IsZero() && pair.UserID != userID {
-			s.audit(ctx, "pair.contested", "system", &pair.DeviceID, &pair.ID, now)
-			return ClaimResult{}, ErrAlreadyClaimed
-		}
-		if err := s.store.SetPairUser(ctx, pair.ID, userID); err != nil {
+		// 首次认领：记录认领者标识与来源 IP（批准时给 PC 端看）
+		if err := s.store.SetPairClaimant(ctx, pair.ID, claimant, in.IP); err != nil {
 			return ClaimResult{}, err
 		}
-		pair.UserID = userID
+		pair.ClaimantID = claimant
+		pair.ClaimIP = in.IP
 	case model.PairPendingApproval:
-		// 同一用户重复 claim 是幂等的（弱网重试）；不同用户则是抢码
-		if pair.UserID != userID {
+		// 同一台手机重复 claim 幂等（弱网重试）；换一台手机就是抢码
+		if pair.ClaimantID != claimant {
 			s.audit(ctx, "pair.contested", "system", &pair.DeviceID, &pair.ID, now)
 			return ClaimResult{}, ErrAlreadyClaimed
 		}
-		refresh, expires, err := s.issueRefresh(ctx, pair.ID, userID, now)
+		refresh, expires, err := s.issueRefresh(ctx, pair.ID, now)
 		if err != nil {
 			return ClaimResult{}, err
 		}
@@ -218,7 +230,7 @@ func (s *Service) Claim(ctx context.Context, userID model.ID, code, deviceName s
 	if err := s.store.SetPairStatus(ctx, pair.ID, model.PairPendingApproval, now, ""); err != nil {
 		return ClaimResult{}, err
 	}
-	refresh, expires, err := s.issueRefresh(ctx, pair.ID, userID, now)
+	refresh, expires, err := s.issueRefresh(ctx, pair.ID, now)
 	if err != nil {
 		return ClaimResult{}, err
 	}
@@ -238,6 +250,17 @@ func (s *Service) Approve(ctx context.Context, deviceID model.ID, pairID model.I
 	}
 	if pair.Status != model.PairPendingApproval {
 		return ApproveResult{}, fmt.Errorf("pair 状态为 %s，无法批准", pair.Status)
+	}
+
+	// L1：手机没登录，pair 上还没有用户 → 用设备主人的身份代签
+	if pair.UserID.IsZero() {
+		ownerID, err := s.resolveDeviceOwner(ctx, deviceID, now)
+		if err != nil {
+			return ApproveResult{}, err
+		}
+		if err := s.store.SetPairUser(ctx, pairID, ownerID); err != nil {
+			return ApproveResult{}, err
+		}
 	}
 
 	var replaced bool
@@ -298,7 +321,8 @@ func (s *Service) Revoke(ctx context.Context, pairID model.ID, actor string, act
 	if actor == "device" && pair.DeviceID != actorID {
 		return ErrUnauthorized
 	}
-	if actor == "mobile" && pair.UserID != actorID {
+	// actorID 为零表示调用方已用「持有该 pair 的 refreshToken」证明过归属（L1 常态）
+	if actor == "mobile" && !actorID.IsZero() && pair.UserID != actorID {
 		return ErrUnauthorized
 	}
 	revokedBy := model.RevokedByMobile
@@ -347,7 +371,7 @@ func (s *Service) Session(ctx context.Context, refreshToken string, pairID model
 	return plain, expires, nil
 }
 
-func (s *Service) issueRefresh(ctx context.Context, pairID, userID model.ID, now int64) (string, int64, error) {
+func (s *Service) issueRefresh(ctx context.Context, pairID model.ID, now int64) (string, int64, error) {
 	plain, hash := auth.NewToken()
 	expires := now + s.cfg.RefreshTTL.Milliseconds()
 	err := s.store.CreateToken(ctx, model.Token{
@@ -362,6 +386,28 @@ func (s *Service) issueRefresh(ctx context.Context, pairID, userID model.ID, now
 		return "", 0, err
 	}
 	return plain, expires, nil
+}
+
+// resolveDeviceOwner 取设备主人；没有就创建并绑定。
+//
+// L1 的语义是「这台机器的主人，就是能在这台机器上点『允许』的人」，
+// 所以设备主人在首次批准时确定，不需要额外的登录流程。
+func (s *Service) resolveDeviceOwner(ctx context.Context, deviceID model.ID, now int64) (model.ID, error) {
+	device, err := s.store.DeviceByID(ctx, deviceID)
+	if err != nil {
+		return model.ID{}, err
+	}
+	if device.OwnerUserID != nil && !device.OwnerUserID.IsZero() {
+		return *device.OwnerUserID, nil
+	}
+	user, err := s.store.UpsertUser(ctx, "device:"+device.ID.String(), device.Name, now)
+	if err != nil {
+		return model.ID{}, err
+	}
+	if err := s.store.SetDeviceOwner(ctx, device.ID, user.ID); err != nil {
+		return model.ID{}, err
+	}
+	return user.ID, nil
 }
 
 func (s *Service) audit(ctx context.Context, action, actor string, deviceID, pairID *model.ID, now int64) {

@@ -15,9 +15,12 @@ import { SseClient, type SseStatus } from "./sse.ts";
 import { TaskStore, type AppView } from "./store.ts";
 import type { Capacity, UiRequestPayload } from "@wire";
 
+/**
+ * 阶段。注意**没有 need-token**：L1 起手机不需要登录，
+ * 授权由 PC 侧 approve 完成（设备主人身份由云端在批准时代签）。
+ */
 export type Phase =
   | "booting"
-  | "need-token"
   | "need-pair"
   | "waiting-approval"
   | "ready"
@@ -118,6 +121,17 @@ export class AppController {
     }
   }
 
+  /** 认领者标识：持久化，保证弱网重试不会把自己当成"另一台手机"。 */
+  #claimantId(): string {
+    const existing = this.#creds.load().claimantId;
+    if (existing) return existing;
+    const bytes = new Uint8Array(8);
+    crypto.getRandomValues(bytes);
+    const id = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+    this.#creds.patch({ claimantId: id });
+    return id;
+  }
+
   #setPhase(phase: Phase, error?: string): void {
     this.#phase = phase;
     this.#error = error;
@@ -129,10 +143,6 @@ export class AppController {
   async bootstrap(): Promise<void> {
     this.#setPhase("booting");
     const creds = this.#creds.load();
-    if (!creds.userToken) {
-      this.#setPhase("need-token");
-      return;
-    }
     if (!creds.pairId || !creds.refreshToken) {
       this.#setPhase("need-pair");
       return;
@@ -140,31 +150,26 @@ export class AppController {
     await this.#ensureReady();
   }
 
-  /** 手动提供登录凭据（M1：没有 SSO，粘贴长期 token）。 */
-  async submitUserToken(userToken: string): Promise<void> {
-    this.#creds.patch({ userToken: userToken.trim() });
-    await this.bootstrap();
-  }
-
-  async signOut(): Promise<void> {
+  /** 断开当前配对（凭据与本地缓存一起清掉，回到配对页）。 */
+  async unpair(): Promise<void> {
     this.#stopSse();
-    this.#creds.clear();
+    this.#stopApprovalPolling();
+    this.#creds.patch({ pairId: undefined, refreshToken: undefined, pairToken: undefined });
     this.store.reset();
     this.#pairs = [];
     this.#workspaces = [];
-    this.#setPhase("need-token");
+    this.#setPhase("need-pair");
   }
 
   // ── 配对 ────────────────────────────────────────────────────
 
   async claim(code: string, deviceName: string): Promise<void> {
-    const { userToken } = this.#creds.load();
-    if (!userToken) {
-      this.#setPhase("need-token");
-      return;
-    }
     try {
-      const result = await this.#api.claim(userToken, code.trim().toUpperCase(), deviceName || "phone");
+      const result = await this.#api.claim(
+        code.trim().toUpperCase(),
+        deviceName || "phone",
+        this.#claimantId(),
+      );
       this.#creds.patch({ pairId: result.pairId, refreshToken: result.refreshToken });
       this.#setPhase("waiting-approval");
       this.#startApprovalPolling();
@@ -178,10 +183,10 @@ export class AppController {
     this.#stopApprovalPolling();
     const began = this.#now();
     const tick = async (): Promise<void> => {
-      const { userToken, pairId } = this.#creds.load();
-      if (!userToken || !pairId) return;
+      const { refreshToken, pairId } = this.#creds.load();
+      if (!refreshToken || !pairId) return;
       try {
-        const { pairs } = await this.#api.pairCurrent(userToken);
+        const { pairs } = await this.#api.pairCurrent(refreshToken);
         this.#pairs = pairs;
         const mine = pairs.find((p) => p.pairId === pairId);
         if (mine?.status === "active") {
@@ -198,7 +203,8 @@ export class AppController {
       } catch (error) {
         if (error instanceof ApiError && error.isAuthFailure) {
           this.#stopApprovalPolling();
-          this.#setPhase("need-token", "登录凭据无效");
+          this.#creds.patch({ pairId: undefined, refreshToken: undefined });
+          this.#setPhase("need-pair", "配对凭据已失效，请重新配对");
           return;
         }
       }
@@ -384,10 +390,10 @@ export class AppController {
   }
 
   async revokePair(): Promise<void> {
-    const { userToken, pairId } = this.#creds.load();
-    if (!userToken || !pairId) return;
+    const { refreshToken, pairId } = this.#creds.load();
+    if (!pairId) return;
     try {
-      await this.#api.revokePair(userToken, pairId, "user requested");
+      if (refreshToken) await this.#api.revokePair(refreshToken, pairId, "user requested");
     } finally {
       this.#stopSse();
       this.#creds.patch({ pairId: undefined, refreshToken: undefined, pairToken: undefined });
@@ -428,8 +434,15 @@ export class AppController {
   }
 }
 
+/**
+ * 把错误翻译成人话。
+ * 不暴露内部错误码前缀（如 `unauthorized:`）—— 对用户没有信息量，只是噪音；
+ * 只在没有 message 时才退回用 code。
+ */
 function describe(error: unknown): string {
-  if (error instanceof ApiError) return `${error.code}: ${error.message}`;
+  if (error instanceof ApiError) {
+    return error.message || error.code;
+  }
   if (error instanceof Error) return error.message;
   return String(error);
 }

@@ -111,14 +111,21 @@ type Device struct {
 	ID          ID
 	Name        string
 	Fingerprint string
+	// OwnerUserID 是这台设备的主人。L1 配对里手机不登录，
+	// approve 时用它的身份给手机签发访问权；首次批准时自动创建/绑定。
+	OwnerUserID *ID
 	LastSeenAt  *int64
 	CreatedAt   int64
 }
 
 type Pair struct {
-	ID         ID
-	DeviceID   ID
-	UserID     ID
+	ID       ID
+	DeviceID ID
+	// UserID 在 claim 阶段可能为空（手机不登录），approve 时由设备主人补齐
+	UserID ID
+	// ClaimantID 是手机自己生成的稳定标识，用于 claim 幂等与抢码判定
+	ClaimantID string
+	ClaimIP    string
 	Status     PairStatus
 	CreatedAt  int64
 	ApprovedAt *int64

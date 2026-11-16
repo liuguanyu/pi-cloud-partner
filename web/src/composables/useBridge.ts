@@ -11,7 +11,6 @@ import type { UiRequestPayload } from "@wire";
 export interface BridgeApi {
   state: Ref<AppState>;
   actions: {
-    submitUserToken(token: string): Promise<void>;
     claim(code: string, deviceName: string): Promise<void>;
     startTask(input: { prompt: string; workspace: string; isolation?: "shared" | "worktree" }): Promise<string>;
     steerTask(taskId: string, text: string, mode?: "steer" | "follow_up"): Promise<void>;
@@ -19,7 +18,7 @@ export interface BridgeApi {
     focusTask(taskId: string | null): Promise<void>;
     answer(approval: UiRequestPayload & { taskId: string }, decision: "approve" | "deny" | { value: unknown }): Promise<void>;
     revokePair(): Promise<void>;
-    signOut(): Promise<void>;
+    unpair(): Promise<void>;
     loadHistory(taskId: string): Promise<void>;
     refreshWorkspaces(): Promise<void>;
   };
@@ -54,7 +53,6 @@ export function useBridge(): BridgeApi {
   return {
     state,
     actions: {
-      submitUserToken: (token) => app.submitUserToken(token),
       claim: (code, deviceName) => app.claim(code, deviceName),
       startTask: (input) => app.startTask(input),
       steerTask: (taskId, text, mode) => app.steerTask(taskId, text, mode),
@@ -62,7 +60,7 @@ export function useBridge(): BridgeApi {
       focusTask: (taskId) => app.focusTask(taskId),
       answer: (approval, decision) => app.answerApproval(approval, decision),
       revokePair: () => app.revokePair(),
-      signOut: () => app.signOut(),
+      unpair: () => app.unpair(),
       loadHistory: (taskId) => app.loadHistory(taskId),
       refreshWorkspaces: () => app.refreshWorkspaces(),
     },

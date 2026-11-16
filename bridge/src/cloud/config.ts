@@ -39,6 +39,13 @@ export interface BridgeConfig {
    * 就认为"人在终端里用 pi"，手机任务排队等待。0 = 关闭。
    */
   terminalBusyWindowSeconds: number;
+  /**
+   * 本地控制台端口（仅监听 127.0.0.1）。0 = 关闭。
+   * 页面由 bridge 自己提供，deviceToken 不出这台机器。
+   */
+  deviceConsolePort: number;
+  /** web 构建产物目录，默认 ../web/dist（相对 bridge 目录） */
+  deviceConsoleDist?: string;
 }
 
 export interface Credentials {
@@ -68,6 +75,7 @@ const DEFAULTS: Omit<BridgeConfig, "serverUrl"> = {
   projectTrust: "deny",
   heartbeatSeconds: 30,
   terminalBusyWindowSeconds: 60,
+  deviceConsolePort: 8788,
 };
 
 export function loadConfig(): BridgeConfig {

@@ -242,8 +242,8 @@ func (s *Store) UserByID(ctx context.Context, id model.ID) (model.User, error) {
 
 func (s *Store) CreateDevice(ctx context.Context, d model.Device) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO devices (id, name, fingerprint, last_seen_at, created_at) VALUES (?,?,?,?,?)`,
-		d.ID[:], d.Name, d.Fingerprint, nullInt(d.LastSeenAt), d.CreatedAt)
+		`INSERT INTO devices (id, name, fingerprint, owner_user_id, last_seen_at, created_at) VALUES (?,?,?,?,?,?)`,
+		d.ID[:], d.Name, d.Fingerprint, nullableIDPtr(d.OwnerUserID), nullInt(d.LastSeenAt), d.CreatedAt)
 	return wrap(err)
 }
 
@@ -253,15 +253,26 @@ func (s *Store) DeviceByID(ctx context.Context, id model.ID) (model.Device, erro
 		rawID    []byte
 		lastSeen sql.NullInt64
 	)
+	var owner []byte
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, fingerprint, last_seen_at, created_at FROM devices WHERE id = ?`, id[:]).
-		Scan(&rawID, &d.Name, &d.Fingerprint, &lastSeen, &d.CreatedAt)
+		`SELECT id, name, fingerprint, owner_user_id, last_seen_at, created_at FROM devices WHERE id = ?`, id[:]).
+		Scan(&rawID, &d.Name, &d.Fingerprint, &owner, &lastSeen, &d.CreatedAt)
 	if err != nil {
 		return model.Device{}, wrap(err)
 	}
 	copy(d.ID[:], rawID)
+	if len(owner) == 16 {
+		ownerID := model.ID{}
+		copy(ownerID[:], owner)
+		d.OwnerUserID = &ownerID
+	}
 	d.LastSeenAt = toPtr(lastSeen)
 	return d, nil
+}
+
+func (s *Store) SetDeviceOwner(ctx context.Context, id, ownerID model.ID) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE devices SET owner_user_id = ? WHERE id = ?`, ownerID[:], id[:])
+	return wrap(err)
 }
 
 func (s *Store) TouchDevice(ctx context.Context, id model.ID, now int64) error {
@@ -340,6 +351,13 @@ func (s *Store) CreatePairCode(ctx context.Context, c model.PairCode) error {
 	return wrap(err)
 }
 
+func nullableIDPtr(id *model.ID) any {
+	if id == nil || id.IsZero() {
+		return nil
+	}
+	return id[:]
+}
+
 func nullableID(id model.ID) any {
 	if id.IsZero() {
 		return nil
@@ -399,9 +417,9 @@ func (s *Store) PairCodeDelete(ctx context.Context, code string) error {
 
 func (s *Store) CreatePair(ctx context.Context, p model.Pair) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO pairs (id, device_id, user_id, status, created_at, approved_at, revoked_at, revoked_by)
-		 VALUES (?,?,?,?,?,?,?,NULL)`,
-		p.ID[:], p.DeviceID[:], nullableID(p.UserID), string(p.Status), p.CreatedAt,
+		`INSERT INTO pairs (id, device_id, user_id, claimant_id, claim_ip, status, created_at, approved_at, revoked_at, revoked_by)
+		 VALUES (?,?,?,?,?,?,?,?,?,NULL)`,
+		p.ID[:], p.DeviceID[:], nullableID(p.UserID), p.ClaimantID, p.ClaimIP, string(p.Status), p.CreatedAt,
 		nullInt(p.ApprovedAt), nullInt(p.RevokedAt))
 	return wrap(err)
 }
@@ -410,11 +428,12 @@ func (s *Store) scanPair(row interface{ Scan(...any) error }) (model.Pair, error
 	var (
 		p                    model.Pair
 		rawID, rawDev, rawUs []byte
+		claimantID, claimIP  string
 		status               string
 		approved, revoked    sql.NullInt64
 		revokedBy            sql.NullString
 	)
-	err := row.Scan(&rawID, &rawDev, &rawUs, &status, &p.CreatedAt, &approved, &revoked, &revokedBy)
+	err := row.Scan(&rawID, &rawDev, &rawUs, &claimantID, &claimIP, &status, &p.CreatedAt, &approved, &revoked, &revokedBy)
 	if err != nil {
 		return model.Pair{}, wrap(err)
 	}
@@ -423,6 +442,8 @@ func (s *Store) scanPair(row interface{ Scan(...any) error }) (model.Pair, error
 	if len(rawUs) == 16 {
 		copy(p.UserID[:], rawUs)
 	}
+	p.ClaimantID = claimantID
+	p.ClaimIP = claimIP
 	p.Status = model.PairStatus(status)
 	p.ApprovedAt = toPtr(approved)
 	p.RevokedAt = toPtr(revoked)
@@ -430,7 +451,7 @@ func (s *Store) scanPair(row interface{ Scan(...any) error }) (model.Pair, error
 	return p, nil
 }
 
-const pairColumns = `id, device_id, user_id, status, created_at, approved_at, revoked_at, revoked_by`
+const pairColumns = `id, device_id, user_id, claimant_id, claim_ip, status, created_at, approved_at, revoked_at, revoked_by`
 
 func (s *Store) PairByID(ctx context.Context, id model.ID) (model.Pair, error) {
 	return s.scanPair(s.db.QueryRowContext(ctx, `SELECT `+pairColumns+` FROM pairs WHERE id = ?`, id[:]))
@@ -504,6 +525,12 @@ func (s *Store) SetPairUser(ctx context.Context, id, userID model.ID) error {
 }
 
 // ── 审计 ──────────────────────────────────────────────────────
+
+func (s *Store) SetPairClaimant(ctx context.Context, id model.ID, claimantID, ip string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE pairs SET claimant_id = ?, claim_ip = ? WHERE id = ?`, claimantID, ip, id[:])
+	return wrap(err)
+}
 
 func (s *Store) AppendAudit(ctx context.Context, e model.AuditEvent) error {
 	var pairID, deviceID, taskID any

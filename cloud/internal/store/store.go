@@ -31,6 +31,8 @@ type Store interface {
 	CreateDevice(ctx context.Context, d model.Device) error
 	DeviceByID(ctx context.Context, id model.ID) (model.Device, error)
 	TouchDevice(ctx context.Context, id model.ID, now int64) error
+	// SetDeviceOwner 绑定设备主人（L1：首次 approve 时自动绑定）
+	SetDeviceOwner(ctx context.Context, id, ownerID model.ID) error
 
 	// ── 凭据 ──────────────────────────────────────────────
 	CreateToken(ctx context.Context, t model.Token) error
@@ -54,8 +56,10 @@ type Store interface {
 	PairsByUser(ctx context.Context, userID model.ID) ([]model.Pair, error)
 	PairsByDevice(ctx context.Context, deviceID model.ID) ([]model.Pair, error)
 	SetPairStatus(ctx context.Context, id model.ID, status model.PairStatus, now int64, revokedBy model.RevokedBy) error
-	// SetPairUser 在 claim 时把手机用户绑定到 pair（request 阶段还不知道是谁）
+	// SetPairUser 在 approve 时把设备主人绑定到 pair
 	SetPairUser(ctx context.Context, id, userID model.ID) error
+	// SetPairClaimant 记录认领者标识与来源 IP（claim 阶段，此时还没有用户身份）
+	SetPairClaimant(ctx context.Context, id model.ID, claimantID, ip string) error
 
 	// ── 审计（append-only） ────────────────────────────────
 	AppendAudit(ctx context.Context, e model.AuditEvent) error

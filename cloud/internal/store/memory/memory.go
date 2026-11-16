@@ -97,6 +97,19 @@ func (s *Store) TouchDevice(_ context.Context, id model.ID, now int64) error {
 	return nil
 }
 
+func (s *Store) SetDeviceOwner(_ context.Context, id, ownerID model.ID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.devices[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	owner := ownerID
+	d.OwnerUserID = &owner
+	s.devices[id] = d
+	return nil
+}
+
 func (s *Store) CreateToken(_ context.Context, t model.Token) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -301,6 +314,19 @@ func (s *Store) SetPairUser(_ context.Context, id, userID model.ID) error {
 		return store.ErrNotFound
 	}
 	p.UserID = userID
+	s.pairs[id] = p
+	return nil
+}
+
+func (s *Store) SetPairClaimant(_ context.Context, id model.ID, claimantID, ip string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.pairs[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	p.ClaimantID = claimantID
+	p.ClaimIP = ip
 	s.pairs[id] = p
 	return nil
 }

@@ -42,6 +42,7 @@ export interface PairClaimResult {
 export interface PairView {
   pairId: string;
   status: string;
+  claimIp?: string;
   device?: { deviceId: string; name: string; online: boolean };
   user?: { userId: string; displayName: string };
 }
@@ -82,16 +83,21 @@ export class ApiClient {
     return this.#json("POST", "/pair/request", { kind: "device", token: deviceToken }, {});
   }
 
-  claim(userToken: string, code: string, deviceName: string): Promise<PairClaimResult> {
-    return this.#json("POST", "/pair/claim", { kind: "bearer", token: userToken }, { code, deviceName });
+  /**
+   * 认领配对码。**不需要登录**（L1）：授权发生在 PC 侧的 approve。
+   * claimantId 仅用于幂等与抢码判定。
+   */
+  claim(code: string, deviceName: string, claimantId: string): Promise<PairClaimResult> {
+    return this.#json("POST", "/pair/claim", { kind: "none" }, { code, deviceName, claimantId });
   }
 
-  pairCurrent(userToken: string): Promise<{ pairs: PairView[] }> {
-    return this.#json("GET", "/pair/current", { kind: "bearer", token: userToken }, undefined);
+  /** 用 refreshToken 查自己这个 pair 的状态（等待批准时轮询用）。 */
+  pairCurrent(refreshToken: string): Promise<{ pairs: PairView[] }> {
+    return this.#json("GET", "/pair/current", { kind: "bearer", token: refreshToken }, undefined);
   }
 
-  revokePair(userToken: string, pairId: string, reason?: string): Promise<{ status: string }> {
-    return this.#json("POST", "/pair/revoke", { kind: "bearer", token: userToken }, { pairId, reason });
+  revokePair(refreshToken: string, pairId: string, reason?: string): Promise<{ status: string }> {
+    return this.#json("POST", "/pair/revoke", { kind: "bearer", token: refreshToken }, { pairId, reason });
   }
 
   // ── 会话 ──────────────────────────────────────────────────

@@ -6,8 +6,13 @@
  */
 
 export interface StoredCredentials {
-  /** 手机登录凭据（M1 阶段手动提供） */
-  userToken?: string;
+  /**
+   * 认领者标识：手机自己生成并持久化。
+   *
+   * L1 起手机不再登录，这个 id 是唯一能区分"同一台手机重试"与"别的手机抢码"的依据。
+   * 它不代表身份，只代表"同一个客户端实例"，丢了就当作新手机（会被要求重新配对）。
+   */
+  claimantId?: string;
   pairId?: string;
   /** 配对后拿到的长期刷新凭据 */
   refreshToken?: string;

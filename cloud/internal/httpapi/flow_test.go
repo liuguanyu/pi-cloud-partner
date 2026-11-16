@@ -190,51 +190,38 @@ func TestPairingHappyPath(t *testing.T) {
 // 抢码必须硬拒绝，且不提供覆盖路径。
 func TestSecondClaimRejected(t *testing.T) {
 	e := newEnv(t)
-	ctx := context.Background()
 
 	var pr pairRequestResp
 	e.do("POST", "/pair/request", "Device "+e.devTok, map[string]any{}, &pr)
 
 	// 第一台手机
 	var first claimResp
-	if resp := e.do("POST", "/pair/claim", "Bearer "+e.userTok,
-		map[string]any{"code": pr.Code, "deviceName": "phone-A"}, &first); resp.StatusCode != http.StatusOK {
+	if resp := e.do("POST", "/pair/claim", "",
+		map[string]any{"code": pr.Code, "deviceName": "phone-A", "claimantId": "claim-a"}, &first); resp.StatusCode != http.StatusOK {
 		t.Fatalf("首个 claim 应成功，实际 %d", resp.StatusCode)
 	}
 
-	// 第二台手机（另一个用户）
-	other, err := e.store.UpsertUser(ctx, "intruder", "intruder", time.Now().UnixMilli())
-	if err != nil {
-		t.Fatal(err)
-	}
-	plain, hash := auth.NewToken()
-	if err := e.store.CreateToken(ctx, model.Token{
-		ID: model.NewID(), Kind: model.TokenUser, SubjectID: other.ID,
-		Hash: hash, CreatedAt: time.Now().UnixMilli(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	resp := e.do("POST", "/pair/claim", "Bearer "+plain,
-		map[string]any{"code": pr.Code, "deviceName": "phone-B"}, nil)
+	// 换一台手机（不同 claimantId）抢码 → 必须拒绝
+	resp := e.do("POST", "/pair/claim", "",
+		map[string]any{"code": pr.Code, "deviceName": "phone-B", "claimantId": "claim-b"}, nil)
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("抢码应 409，实际 %d", resp.StatusCode)
 	}
 
-	// 同一用户重复 claim 是幂等的（弱网重试）
+	// 同一台手机重复 claim 是幂等的（弱网重试）
 	var again claimResp
-	resp = e.do("POST", "/pair/claim", "Bearer "+e.userTok,
-		map[string]any{"code": pr.Code, "deviceName": "phone-A"}, &again)
+	resp = e.do("POST", "/pair/claim", "",
+		map[string]any{"code": pr.Code, "deviceName": "phone-A", "claimantId": "claim-a"}, &again)
 	if resp.StatusCode != http.StatusOK || again.PairID != first.PairID {
-		t.Fatalf("同一用户重复 claim 应幂等，状态码 %d pairId %s vs %s", resp.StatusCode, again.PairID, first.PairID)
+		t.Fatalf("同一 claimant 重复 claim 应幂等，状态码 %d pairId %s vs %s", resp.StatusCode, again.PairID, first.PairID)
 	}
 }
 
 // 过期的码不可用；乱码不可用。
 func TestClaimRejectsBadCode(t *testing.T) {
 	e := newEnv(t)
-	resp := e.do("POST", "/pair/claim", "Bearer "+e.userTok,
-		map[string]any{"code": "ZZZZZZ", "deviceName": "x"}, nil)
+	resp := e.do("POST", "/pair/claim", "",
+		map[string]any{"code": "ZZZZZZ", "deviceName": "x", "claimantId": "claim-a"}, nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("不存在的码应 404，实际 %d", resp.StatusCode)
 	}
@@ -246,10 +233,10 @@ func TestApproveRequiresDeviceToken(t *testing.T) {
 	var pr pairRequestResp
 	e.do("POST", "/pair/request", "Device "+e.devTok, map[string]any{}, &pr)
 	var claim claimResp
-	e.do("POST", "/pair/claim", "Bearer "+e.userTok, map[string]any{"code": pr.Code, "deviceName": "x"}, &claim)
+	e.do("POST", "/pair/claim", "", map[string]any{"code": pr.Code, "deviceName": "x", "claimantId": "claim-a"}, &claim)
 
-	// 手机（user 凭据）试图自我批准：必须被拒
-	resp := e.do("POST", "/pair/approve", "Bearer "+e.userTok,
+	// 手机（持有 refreshToken）试图自我批准：必须被拒
+	resp := e.do("POST", "/pair/approve", "Bearer "+claim.RefreshToken,
 		map[string]any{"pairId": claim.PairID, "decision": "approve"}, nil)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("非 device 凭据 approve 应 401，实际 %d", resp.StatusCode)
@@ -264,7 +251,7 @@ func TestBridgeRelayAndSSE(t *testing.T) {
 	var pr pairRequestResp
 	e.do("POST", "/pair/request", "Device "+e.devTok, map[string]any{}, &pr)
 	var claim claimResp
-	e.do("POST", "/pair/claim", "Bearer "+e.userTok, map[string]any{"code": pr.Code, "deviceName": "x"}, &claim)
+	e.do("POST", "/pair/claim", "", map[string]any{"code": pr.Code, "deviceName": "x", "claimantId": "claim-a"}, &claim)
 	e.do("POST", "/pair/approve", "Device "+e.devTok, map[string]any{"pairId": claim.PairID, "decision": "approve"}, nil)
 
 	// bridge 连上来
@@ -390,7 +377,7 @@ func TestWorkspaceAllowlist(t *testing.T) {
 	var pr pairRequestResp
 	e.do("POST", "/pair/request", "Device "+e.devTok, map[string]any{}, &pr)
 	var claim claimResp
-	e.do("POST", "/pair/claim", "Bearer "+e.userTok, map[string]any{"code": pr.Code, "deviceName": "x"}, &claim)
+	e.do("POST", "/pair/claim", "", map[string]any{"code": pr.Code, "deviceName": "x", "claimantId": "claim-a"}, &claim)
 	e.do("POST", "/pair/approve", "Device "+e.devTok, map[string]any{"pairId": claim.PairID, "decision": "approve"}, nil)
 
 	var session struct {

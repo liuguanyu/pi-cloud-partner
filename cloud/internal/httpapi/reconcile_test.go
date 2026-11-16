@@ -21,8 +21,8 @@ func setupPairedBridge(t *testing.T, e *env) (pairIDRef string, pairToken string
 	var pr pairRequestResp
 	e.do("POST", "/pair/request", "Device "+e.devTok, map[string]any{}, &pr)
 	var claim claimResp
-	e.do("POST", "/pair/claim", "Bearer "+e.userTok,
-		map[string]any{"code": pr.Code, "deviceName": "x"}, &claim)
+	e.do("POST", "/pair/claim", "",
+		map[string]any{"code": pr.Code, "deviceName": "x", "claimantId": "claim-a"}, &claim)
 	e.do("POST", "/pair/approve", "Device "+e.devTok,
 		map[string]any{"pairId": claim.PairID, "decision": "approve"}, nil)
 
