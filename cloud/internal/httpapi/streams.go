@@ -254,6 +254,10 @@ func (s *Server) ingestBridgeFrame(ctx context.Context, dev model.Device, env pr
 	}
 
 	switch env.Type {
+	case protocol.TypeStateSnapshot:
+		// 设备级帧，没有 pairId，必须在下面的 pairId 校验之前处理
+		s.reconcileState(ctx, dev, env)
+		return
 	case protocol.TypeBridgePing:
 		// 保活帧：更新设备心跳后直接返回，不产生任何事件
 		_ = s.cfg.Store.TouchDevice(ctx, dev.ID, s.cfg.Now())
@@ -282,6 +286,104 @@ func (s *Server) ingestBridgeFrame(ctx context.Context, dev model.Device, env pr
 
 	s.cfg.Hub.Publish(pairID, env, protocol.Marshal)
 	s.trackTask(ctx, pairID, env)
+}
+
+// reconcileState 用 bridge 上报的快照校正云端缓存。
+//
+// 三个动作：
+//  1. 快照里有的任务 → 以其为准覆盖状态（并重建审批弹层）
+//  2. 库里非终态、快照里没有 → 说明它在断连期间结束了，标 interrupted
+//  3. 一律推 task.state 给手机，让列表立刻自我修正
+//
+// 幂等：同一份快照反复应用结果相同。
+func (s *Server) reconcileState(ctx context.Context, dev model.Device, env protocol.Envelope) {
+	var payload protocol.StateSnapshot
+	if err := env.Decode(&payload); err != nil {
+		s.cfg.Log.Warn("state.snapshot 解析失败", "err", err)
+		return
+	}
+
+	snapshot := make(map[string]protocol.SnapshotTask, len(payload.Tasks))
+	for _, task := range payload.Tasks {
+		snapshot[task.TaskID] = task
+	}
+
+	now := s.cfg.Now()
+	pairs, _ := s.cfg.Store.PairsByDevice(ctx, dev.ID)
+
+	for _, pair := range pairs {
+		tasks, err := s.cfg.Store.TasksByPair(ctx, pair.ID, 200)
+		if err != nil {
+			continue
+		}
+		for _, task := range tasks {
+			if isTerminalStatus(task.Status) {
+				continue
+			}
+			ref := protocol.RefTask(task.ID)
+			entry, seen := snapshot[ref]
+
+			if !seen {
+				// 断连期间结束（或被 pi 侧超时拒绝后跑完），我们没看到结束事件
+				_ = s.cfg.Store.UpsertTask(ctx, model.Task{
+					ID:         task.ID,
+					Status:     "interrupted",
+					ExitReason: "state_lost",
+					SettledAt:  &now,
+				})
+				s.publishTaskState(pair.ID, ref, "interrupted", "state_lost")
+				continue
+			}
+
+			// 快照为准
+			if entry.Status != task.Status {
+				_ = s.cfg.Store.UpsertTask(ctx, model.Task{ID: task.ID, Status: entry.Status})
+				s.publishTaskState(pair.ID, ref, entry.Status, "")
+			}
+
+			// 有待审批的：把弹层重新推给手机，否则重启后用户永远点不了
+			if entry.Approval != nil {
+				approval := entry.Approval
+				uiEnv, err := protocol.New(protocol.TypeUIRequest, now).WithPayload(map[string]any{
+					"requestId": approval.RequestID,
+					"method":    approval.Method,
+					"title":     approval.Title,
+					"message":   approval.Message,
+					"options":   approval.Options,
+					"taskId":    approval.TaskID,
+				})
+				if err == nil {
+					uiEnv.PairID = protocol.RefPair(pair.ID)
+					uiEnv.TaskID = approval.TaskID
+					s.cfg.Hub.Publish(pair.ID, uiEnv, protocol.Marshal)
+				}
+			}
+		}
+	}
+	s.cfg.Log.Info("状态对账完成", "device", dev.ID.String(), "reported", len(payload.Tasks))
+}
+
+func isTerminalStatus(status string) bool {
+	switch status {
+	case "settled", "failed", "cancelled", "interrupted":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) publishTaskState(pairID model.ID, taskRef, status, exitReason string) {
+	payload := map[string]any{"taskId": taskRef, "status": status}
+	if exitReason != "" {
+		payload["exitReason"] = exitReason
+	}
+	env, err := protocol.New(protocol.TypeTaskState, s.cfg.Now()).WithPayload(payload)
+	if err != nil {
+		return
+	}
+	env.PairID = protocol.RefPair(pairID)
+	env.TaskID = taskRef
+	s.cfg.Hub.Publish(pairID, env, protocol.Marshal)
 }
 
 // trackTask 维护云端任务摘要（不含正文）。失败不影响转发。

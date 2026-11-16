@@ -83,7 +83,8 @@ export class Runner {
   #children = new Map<string, Child>();
   #childSeq = 0;
   #focusedTaskId: string | null = null;
-  #uiOwner = new Map<string, Child>();
+  /** requestId → 发起它的 child 与**请求详情**（对账时要重发给手机） */
+  #uiOwner = new Map<string, { child: Child; request: UiRequest }>();
   /** 最近一次见到的 pairId，用于给已结束任务补上行帧的归属 */
   #lastPairId: string | undefined;
   #settleWaiters = new Map<string, () => void>();
@@ -152,9 +153,10 @@ export class Runner {
 
   /** 回填审批结果。requestId 是 pi 侧 extension_ui_request 的 id。 */
   respondUi(requestId: string, body: { value?: unknown; confirmed?: boolean; cancelled?: boolean }): boolean {
-    const child = this.#uiOwner.get(requestId);
-    if (!child) return false;
+    const entry = this.#uiOwner.get(requestId);
+    if (!entry) return false;
     this.#uiOwner.delete(requestId);
+    const child = entry.child;
     void child.client.respondUi(requestId, body).catch(() => {});
     // 状态在本地切回 running，但**不再重发 task.started**：
     // 手机刚刚亲自点了批准，它知道任务在继续；重发会造成「开始」事件重复。
@@ -214,6 +216,57 @@ export class Runner {
       },
       { name, args, rawArgs: raw },
     );
+  }
+
+  /**
+   * 状态对账快照。
+   *
+   * 数据全部来自本进程已有的内存结构，不额外调用 pi —— 因为问题不是 pi 不知道，
+   * 而是云端缓存因为事件断流而变旧。
+   */
+  snapshot(): {
+    tasks: Array<{
+      taskId: string;
+      status: "running" | "queued" | "awaiting_approval";
+      approval?: { requestId: string; method: string; title?: string; message?: string; options?: string[]; taskId: string };
+    }>;
+  } {
+    const tasks: Array<{
+      taskId: string;
+      status: "running" | "queued" | "awaiting_approval";
+      approval?: { requestId: string; method: string; title?: string; message?: string; options?: string[]; taskId: string };
+    }> = [];
+
+    for (const task of this.#running.values()) {
+      const entry: (typeof tasks)[number] = {
+        taskId: task.req.taskId,
+        status: task.state === "awaiting_approval" ? "awaiting_approval" : "running",
+      };
+      if (task.state === "awaiting_approval") {
+        const approval = [...this.#uiOwner.values()].find(
+          (item) => item.child.task?.req.taskId === task.req.taskId,
+        );
+        if (approval) {
+          const request = approval.request;
+          entry.approval = {
+            requestId: request.id,
+            method: String(request.method ?? "confirm"),
+            title: typeof request.title === "string" ? request.title : undefined,
+            message: typeof request.message === "string" ? request.message : undefined,
+            options: Array.isArray(request.options) ? (request.options as string[]) : undefined,
+            taskId: task.req.taskId,
+          };
+        }
+      }
+      tasks.push(entry);
+    }
+
+    for (const queued of this.#queue) {
+      if (!tasks.some((t) => t.taskId === queued.taskId)) {
+        tasks.push({ taskId: queued.taskId, status: "queued" });
+      }
+    }
+    return { tasks };
   }
 
   capacity(): {
@@ -346,6 +399,9 @@ export class Runner {
       task.child.task = null;
       task.child.lastUsedAt = Date.now();
     }
+    for (const [requestId, entry] of this.#uiOwner) {
+      if (entry.child === task.child) this.#uiOwner.delete(requestId);
+    }
     if (this.#focusedTaskId === task.req.taskId) this.#focusedTaskId = null;
     this.#emit(task, exitReason === "completed" ? Up.taskSettled : Up.taskFailed, {
       ...this.#taskPayload(task),
@@ -453,7 +509,7 @@ export class Runner {
 
   #forwardUiRequest(child: Child, req: UiRequest): void {
     const task = child.task;
-    this.#uiOwner.set(req.id, child);
+    this.#uiOwner.set(req.id, { child, request: req });
     if (task) {
       task.state = "awaiting_approval";
       task.lastSummaryAt = 0;

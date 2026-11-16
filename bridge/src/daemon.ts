@@ -90,6 +90,13 @@ async function main(): Promise<void> {
     heartbeatMs: cfg.heartbeatSeconds * 1000,
     onStatus: (status: CloudStatus, detail?: string) => {
       log(`连接状态 → ${status}`, detail ? { detail } : undefined);
+      if (status === "online") {
+        // 重连后立刻对账：云端 tasks 表是缓存，断连期间会变旧。
+        // 每次连上都发（幂等），云端据此校正状态、重建审批弹层。
+        const { tasks } = runner.snapshot();
+        client.send(envelope(Up.stateSnapshot, { payload: { tasks } }));
+        log("已上报状态快照", { tasks: tasks.length });
+      }
     },
     onFrame: (env) => void handleFrame(env),
     log,

@@ -265,11 +265,19 @@ func (s *Server) handleTaskList(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	// bridge 离线时，库里的非终态状态不可信：没人会再更新它。
+	// 这里只改**返回视图**，不动数据库 —— 让状态自愈，而不是把不确定写成确定。
+	bridgeOnline := s.cfg.Hub.Online(pair.DeviceID)
+
 	out := make([]map[string]any, 0, len(tasks))
 	for _, t := range tasks {
+		status := t.Status
+		if !bridgeOnline && !isTerminalStatus(status) {
+			status = "stale"
+		}
 		view := map[string]any{
 			"taskId":    protocol.RefTask(t.ID),
-			"status":    t.Status,
+			"status":    status,
 			"title":     t.Title,
 			"workspace": t.Workspace,
 			"isolation": t.WorkspaceMode,

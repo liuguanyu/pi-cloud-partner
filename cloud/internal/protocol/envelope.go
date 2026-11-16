@@ -66,6 +66,10 @@ const (
 	TypeHistoryGet = "history.get"
 	// TypeHistoryData 是 history.get 的应答
 	TypeHistoryData = "history.data"
+	// TypeStateSnapshot 是 bridge 重连后的状态对账
+	TypeStateSnapshot = "state.snapshot"
+	// TypeTaskState 是云端校正后推给手机的任务状态
+	TypeTaskState = "task.state"
 
 	// 配对相关（cloud → mobile SSE）
 	TypePairApproved  = "pair.approved"
@@ -197,6 +201,26 @@ type Capacity struct {
 // Resume 是断线续传请求：per-task 游标映射。
 type Resume struct {
 	Cursors map[string]int64 `json:"cursors"`
+}
+
+// StateSnapshot 是 bridge 重连后的状态对账载荷。
+type StateSnapshot struct {
+	Tasks []SnapshotTask `json:"tasks"`
+}
+
+type SnapshotTask struct {
+	TaskID   string            `json:"taskId"`
+	Status   string            `json:"status"`
+	Approval *SnapshotApproval `json:"approval,omitempty"`
+}
+
+type SnapshotApproval struct {
+	RequestID string   `json:"requestId"`
+	Method    string   `json:"method"`
+	Title     string   `json:"title,omitempty"`
+	Message   string   `json:"message,omitempty"`
+	Options   []string `json:"options,omitempty"`
+	TaskID    string   `json:"taskId"`
 }
 
 // UIResponse 回填 pi 的 extension_ui_response。

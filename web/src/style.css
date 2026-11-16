@@ -82,6 +82,7 @@ textarea { resize: none; }
 .pill[data-status="awaiting_approval"] { color: #f0883e; border-color: #5a3a17; background: #33220f; }
 .pill[data-status="settled"] { color: var(--ok); border-color: #1c3b24; background: #12261a; }
 .pill[data-status="failed"], .pill[data-status="cancelled"] { color: var(--err); border-color: #4a2224; background: #2a1416; }
+.pill[data-status="interrupted"], .pill[data-status="stale"] { color: var(--fg-dim); border-color: var(--line); background: transparent; }
 
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fg-dim); }
 .dot[data-on="true"] { background: var(--ok); box-shadow: 0 0 0 3px rgba(63,185,80,0.15); }

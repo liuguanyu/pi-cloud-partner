@@ -151,6 +151,17 @@ export class TaskStore {
       case Up.taskTitleUpdated:
         this.#applyTaskLifecycle(env);
         break;
+      case Up.taskState: {
+        const payload = (env.payload ?? {}) as { taskId?: string; status?: string; exitReason?: string };
+        const taskId = payload.taskId ?? env.taskId;
+        if (taskId && payload.status) {
+          const task = this.#task(taskId);
+          task.status = payload.status;
+          if (payload.exitReason) task.exitReason = payload.exitReason;
+          if (payload.status === "interrupted") task.settledAt = task.settledAt ?? env.ts;
+        }
+        break;
+      }
       case Up.historyData:
         this.#applyHistory(env);
         break;
@@ -584,7 +595,7 @@ function blocksFromContent(content: unknown): Block[] {
 
 /** 供 UI 判断：这个任务是否已经不会再自动继续。 */
 export function isTerminal(status: TaskStatus): boolean {
-  return status === "settled" || status === "failed" || status === "cancelled";
+  return status === "settled" || status === "failed" || status === "cancelled" || status === "interrupted";
 }
 
 export { Down };

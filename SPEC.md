@@ -182,6 +182,25 @@ CREATE TABLE blobs (
 
 **保留策略**：audit 90 天 / tasks 摘要 30 天 / blobs 7 天（定时 GC）/ 会话正文云端永不存。
 
+## 7.0 状态对账（云端 tasks 表只是缓存）
+
+`tasks` 表是为了"手机不依赖 bridge 也能看列表"而存在的**缓存**，只靠事件流更新。
+云端重启会丢事件，缓存就停在旧值（例如永远停在 `awaiting_approval`）。
+
+校正机制（不碰 pi，只用它已有的可观测状态）：
+
+```
+bridge 每次连上（含重连）→ 发 state.snapshot（来自 #running / #uiOwner）
+  → 快照里有的任务：以 bridge 为准覆盖状态
+  → 有待审批的：重发 ui.request，弹层回到手机
+  → 库里非终态但快照里没有：标 interrupted（断连期间结束了，我们没看到）
+  → 逐条推 task.state 给手机，列表自我修正
+
+兜底：bridge 离线时，列表把非终态任务显示为 stale（**只改视图，不改库**）
+```
+
+不变量：**执行态永远在 bridge/pi，云端只是缓存；对账是缓存回源，不是云变权威。**
+
 ## 7.1 历史回看（正文不落云的前提下）
 
 会话正文只在 bridge 磁盘（pi 写的 JSONL）。云端只存 `tasks.session_id`，
@@ -246,6 +265,9 @@ CREATE TABLE blobs (
 1. 在**目标内网机器**执行 `node tools/egress-probe.mjs --host <云域名> --wss-path /ws/bridge --idle 120`，确认进程直连可行（否则切 D1 的备选方案）
 2. 确定云域名（自签也可先跑通）、MySQL 实例、对象存储位置
 3. 登录方式若沿用长期 token，可先跑通链路，M1 末尾再补账号体系
+
+**已知限制（修复进度）**：云端重启导致任务状态停在旧值 → 已由 §7.0 状态对账修复；
+单任务事件超过 ring 容量 → 由 §7.1 历史回看补齐。
 
 **2026-11-12 已上线**：`https://lab.leon82.com`（Go 服务 systemd 常驻 + Vue 静态站 + WSS/SSE 经 nginx）。
 生产环境真机（Playwright）走通：粘贴令牌 → 配对码 → PC 批准 → 建任务 → 审批弹层 → 本机落盘 → settled。

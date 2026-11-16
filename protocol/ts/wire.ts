@@ -58,6 +58,13 @@ export const Up = {
   taskTitleUpdated: "task.title_updated",
   /** history.get 的应答 */
   historyData: "history.data",
+  /**
+   * bridge 重连后主动上报自己当前真实持有的任务状态。
+   * 云端 tasks 表只是缓存，事件断流就会停在旧值，靠这一帧回源校正。
+   */
+  stateSnapshot: "state.snapshot",
+  /** 云端把校正结果推给手机（也用于把「断连期间结束」的任务标成 interrupted） */
+  taskState: "task.state",
 } as const;
 
 /** 配对相关（云端向手机 SSE 推送） */
@@ -149,6 +156,33 @@ export interface HistoryDataPayload {
   }>;
   missing?: boolean;
   truncated?: boolean;
+}
+
+/** 待审批请求的完整信息，重连后云端用它把弹层重新推给手机 */
+export interface PendingApproval {
+  requestId: string;
+  method: string;
+  title?: string;
+  message?: string;
+  options?: string[];
+  taskId: string;
+}
+
+/** state.snapshot 载荷：bridge 视角的真相 */
+export interface StateSnapshotPayload {
+  tasks: Array<{
+    taskId: string;
+    status: "running" | "queued" | "awaiting_approval";
+    /** awaiting_approval 时带上，云端据此重发 ui.request */
+    approval?: PendingApproval;
+  }>;
+}
+
+/** task.state 载荷：云端校正后的状态 */
+export interface TaskStatePayload {
+  taskId: string;
+  status: string;
+  exitReason?: string;
 }
 
 export function isEnvelope(value: unknown): value is Envelope {

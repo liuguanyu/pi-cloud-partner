@@ -75,6 +75,8 @@ function statusLabel(status: string): string {
       settled: "已完成",
       failed: "失败",
       cancelled: "已取消",
+      interrupted: "已中断（状态未同步）",
+      stale: "状态未知",
     } as Record<string, string>
   )[status] ?? status;
 }
