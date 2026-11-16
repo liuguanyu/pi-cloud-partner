@@ -44,6 +44,7 @@ async function main(): Promise<void> {
     maxRunning: cfg.maxRunning,
     trust: cfg.projectTrust,
     approval: cfg.approval,
+    terminalAvoidance: cfg.terminalBusyWindowSeconds > 0 ? `${cfg.terminalBusyWindowSeconds}s` : "off",
   });
 
   if (cfg.workspaces.length === 0) {
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
     sessionDir: cfg.sessionDir,
     approvalExtension: cfg.approval ? APPROVAL_EXTENSION : undefined,
     projectTrust: cfg.projectTrust,
+    terminalBusyWindowMs: cfg.terminalBusyWindowSeconds * 1000,
     onUp: (env) => {
       if (!client.send(env)) {
         // 离线时上行帧直接丢弃：这些事件属于实时流，桥接侧有 ring buffer 兜底

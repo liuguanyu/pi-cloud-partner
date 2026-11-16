@@ -104,7 +104,8 @@ function statusLabel(status: string): string {
         </div>
         <div class="sub muted">
           <span v-if="task.workspace">{{ shortPath(task.workspace) }}</span>
-          <span v-if="task.lastLine" class="line">{{ task.lastLine }}</span>
+          <span v-if="task.holdReason === 'terminal_busy'" class="held">终端正在使用该目录，已排队</span>
+          <span v-else-if="task.lastLine" class="line">{{ task.lastLine }}</span>
         </div>
       </li>
       <li v-if="props.tasks.length === 0" class="empty muted">还没有任务。在下面输入你的第一个需求。</li>
@@ -164,6 +165,7 @@ function statusLabel(status: string): string {
 .title { font-size: 14px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sub { display: flex; gap: 8px; font-size: 12px; margin-top: 5px; }
 .sub .line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub .held { color: var(--warn); }
 
 .empty { text-align: center; padding: 32px 12px; font-size: 13px; }
 

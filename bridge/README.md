@@ -145,6 +145,27 @@ node src/daemon.ts
 `Authorization: Device <token>`（实测内置实现只会报 `Unexpected server response` 或无鉴权连接）。
 `ws` 自身零依赖，并支持 headers / ping / 背压。
 
+### 终端避让（`terminalBusyWindowSeconds`，默认 60）
+
+你在终端里用 pi 干活时，手机端下发的任务**不会**扎进去抢同一个目录：
+
+```
+任务开始前检查该 workspace 的会话目录，最新 JSONL 的 mtime
+  ├─ 窗口内有写入 且 不是 bridge 自己的子进程 → 排队，UI 显示「终端正在使用该目录」
+  └─ 否则（含窗口外、或就是自己写的）        → 正常执行
+排队中的任务每 10 秒复查一次，人一停就自动放行。
+```
+
+两个实现细节（都踩过）：
+
+1. **必须排除自己的子进程**：bridge 跑任务时也在写同一个会话目录，
+   不排除会永远判定为"忙"，串行避让退化成永久阻塞。
+2. **必须同时查归一化前后的路径**：macOS 上 `/tmp` 是 `/private/tmp` 的软链，
+   人在 `/tmp/foo` 起 pi、bridge 拿 `/private/tmp/foo` 去查会漏判。
+
+这是启发式（不是锁）：开着 pi 但没在操作会被判成空闲。它的目标是"别撞车"，
+不是精确排他——真正的排他要 pi 提供锁，而它没有。
+
 ### 必须显式传 `--approve/--no-approve`
 
 RPC 模式下没人能回答 project trust 弹窗。不传就会**静默跳过**项目级

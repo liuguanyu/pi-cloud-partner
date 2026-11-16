@@ -34,6 +34,11 @@ export interface BridgeConfig {
    */
   projectTrust: "approve" | "deny";
   heartbeatSeconds: number;
+  /**
+   * 终端避让：该目录的会话文件在这个窗口内被非 bridge 进程写过，
+   * 就认为"人在终端里用 pi"，手机任务排队等待。0 = 关闭。
+   */
+  terminalBusyWindowSeconds: number;
 }
 
 export interface Credentials {
@@ -62,6 +67,7 @@ const DEFAULTS: Omit<BridgeConfig, "serverUrl"> = {
   approval: true,
   projectTrust: "deny",
   heartbeatSeconds: 30,
+  terminalBusyWindowSeconds: 60,
 };
 
 export function loadConfig(): BridgeConfig {

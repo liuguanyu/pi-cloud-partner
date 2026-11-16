@@ -17,6 +17,7 @@ import { basename } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
 import { PiClient, isUiRequest, type PiRecord, type UiRequest } from "../pi/client.ts";
 import { execControl, type ControlResult } from "../control/index.ts";
+import { isWorkspaceBusyByTerminal } from "./busy.ts";
 import { envelope, Up, type Envelope } from "./protocol.ts";
 
 export interface RunnerOptions {
@@ -30,6 +31,11 @@ export interface RunnerOptions {
   approvalExtension?: string;
   /** deny = 不加载项目级资源（默认、安全）；approve = 加载 */
   projectTrust: "approve" | "deny";
+  /**
+   * 终端避让窗口（毫秒）：该 workspace 的会话文件在窗口内被**非 bridge** 进程
+   * 写过，就视为"人在终端里用"，任务排队等待。0 = 关闭避让。
+   */
+  terminalBusyWindowMs: number;
   onUp: (env: Envelope) => void;
   log: (msg: string, data?: Record<string, unknown>) => void;
 }
@@ -55,6 +61,12 @@ interface HistoryRequest {
   sinceMs?: number;
 }
 
+interface HeldTask {
+  taskId: string;
+  workspace: string;
+  since: number;
+}
+
 interface RunningTask {
   req: TaskRequest;
   workspace: string;
@@ -72,6 +84,8 @@ interface Child {
   client: PiClient;
   task: RunningTask | null;
   lastUsedAt: number;
+  /** 最近一次拿到的 sessionId，用于把"自己写的会话"从忙碌判定里排除 */
+  sessionId?: string;
 }
 
 const SUMMARY_INTERVAL_MS = 1_000;
@@ -88,6 +102,9 @@ export class Runner {
   /** 最近一次见到的 pairId，用于给已结束任务补上行帧的归属 */
   #lastPairId: string | undefined;
   #settleWaiters = new Map<string, () => void>();
+  /** workspace → 因"终端正在使用"被挂起的时间，用于只提示一次 */
+  #heldByTerminal = new Map<string, number>();
+  #pumpTimer: ReturnType<typeof setTimeout> | null = null;
   #recycler: ReturnType<typeof setInterval> | null = null;
   #closed = false;
 
@@ -288,6 +305,10 @@ export class Runner {
   async shutdown(): Promise<void> {
     this.#closed = true;
     if (this.#recycler) clearInterval(this.#recycler);
+    if (this.#pumpTimer) {
+      clearTimeout(this.#pumpTimer);
+      this.#pumpTimer = null;
+    }
     const children = [...this.#children.values()];
     this.#children.clear();
     await Promise.allSettled(children.map((c) => c.client.stop()));
@@ -297,15 +318,94 @@ export class Runner {
 
   #pump(): void {
     if (this.#closed) return;
+    void this.#pumpAsync();
+  }
+
+  async #pumpAsync(): Promise<void> {
+    if (this.#closed) return;
     while (this.#running.size < this.#opts.maxRunning && this.#queue.length > 0) {
       // 同一 workspace 内串行：跳过正在被占用的 workspace
       const busy = new Set([...this.#running.values()].map((t) => t.workspace));
-      const idx = this.#queue.findIndex((t) => !busy.has(t.workspace));
-      if (idx < 0) return;
-      const [req] = this.#queue.splice(idx, 1);
+
+      let picked = -1;
+      let heldAny = false;
+      for (let i = 0; i < this.#queue.length; i += 1) {
+        const candidate = this.#queue[i];
+        if (!candidate) continue;
+        const workspace = this.#resolveWorkspace(candidate.workspace);
+        if (busy.has(workspace)) continue;
+
+        // 终端避让：人在这个目录里用 pi，就先不动它
+        const verdict = await this.#terminalBusy(workspace, candidate.workspace);
+        if (verdict.busy) {
+          heldAny = true;
+          this.#holdForTerminal(candidate, workspace, verdict.ageMs ?? 0);
+          continue;
+        }
+        this.#heldByTerminal.delete(workspace);
+        picked = i;
+        break;
+      }
+
+      if (picked < 0) {
+        if (heldAny) this.#schedulePump(10_000);
+        return;
+      }
+      const [req] = this.#queue.splice(picked, 1);
       if (!req) return;
       void this.#run(req);
     }
+  }
+
+  /**
+   * 终端占用检查。
+   *  - 排除自己子进程的 sessionId（否则自己的写入会被当成"人在用"）
+   *  - 同时查归一化前后的路径（软链会让会话目录名不一致）
+   */
+  async #terminalBusy(workspace: string, rawWorkspace?: string): Promise<{ busy: boolean; ageMs?: number }> {
+    if (this.#opts.terminalBusyWindowMs <= 0) return { busy: false };
+    const own = new Set<string>();
+    for (const child of this.#children.values()) {
+      if (child.sessionId) own.add(child.sessionId);
+    }
+    const extra = rawWorkspace && rawWorkspace !== workspace ? [rawWorkspace] : [];
+    return isWorkspaceBusyByTerminal(workspace, {
+      windowMs: this.#opts.terminalBusyWindowMs,
+      ownSessionIds: own,
+      sessionDir: this.#opts.sessionDir,
+      extraWorkspaces: extra,
+    });
+  }
+
+  /** 同一次挂起只通知一次，避免每 10 秒刷一条。 */
+  #holdForTerminal(req: TaskRequest, workspace: string, ageMs: number): void {
+    if (this.#heldByTerminal.has(workspace)) return;
+    this.#heldByTerminal.set(workspace, Date.now());
+    this.#opts.log("终端正在使用该目录，任务排队", {
+      taskId: req.taskId,
+      workspace,
+      lastWriteAgoMs: ageMs,
+    });
+    this.#up(
+      envelope(Up.taskEnqueued, {
+        pairId: req.pairId,
+        taskId: req.taskId,
+        payload: {
+          taskId: req.taskId,
+          workspace,
+          holdReason: "terminal_busy",
+          status: "queued",
+        },
+      }),
+    );
+  }
+
+  #schedulePump(delayMs: number): void {
+    if (this.#pumpTimer) return;
+    this.#pumpTimer = setTimeout(() => {
+      this.#pumpTimer = null;
+      this.#pump();
+    }, delayMs);
   }
 
   async #run(req: TaskRequest): Promise<void> {
@@ -353,6 +453,7 @@ export class Runner {
       // 且必须落库——否则 daemon 重启后就没法回看旧任务了。
       const sessionId = typeof state.sessionId === "string" ? state.sessionId : "";
       if (sessionId) {
+        child.sessionId = sessionId;
         this.#emit(task, Up.taskStarted, { ...this.#taskPayload(task), sessionId });
       }
       const streaming = Boolean(state.isStreaming);

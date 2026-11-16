@@ -55,6 +55,8 @@ export interface TaskView {
   queuePosition?: number;
   /** 是否已从磁盘拉取过完整历史 */
   historyLoaded?: boolean;
+  /** 排队被挂起的原因（例如 terminal_busy：终端正在使用该目录） */
+  holdReason?: string;
 }
 
 export interface AppView {
@@ -275,6 +277,7 @@ export class TaskStore {
     if (typeof payload.title === "string" && payload.title) task.title = payload.title;
     if (typeof payload.exitReason === "string") task.exitReason = payload.exitReason;
     if (typeof payload.queuePosition === "number") task.queuePosition = payload.queuePosition;
+    if (typeof payload.holdReason === "string") task.holdReason = payload.holdReason;
 
     const statusByType: Record<string, TaskStatus> = {
       [Up.taskEnqueued]: "queued",
@@ -285,7 +288,13 @@ export class TaskStore {
       [Up.taskCancelled]: "cancelled",
     };
     const nextStatus = statusByType[env.type];
-    if (nextStatus) task.status = nextStatus;
+    if (nextStatus) {
+      task.status = nextStatus;
+      // 任务真正开始/结束后，「终端占用」的挂起提示就不再成立
+      if (nextStatus === "running" || nextStatus === "settled" || nextStatus === "failed") {
+        task.holdReason = undefined;
+      }
+    }
 
     if (nextStatus === "running" && !task.startedAt) task.startedAt = env.ts;
     if ((nextStatus === "settled" || nextStatus === "failed" || nextStatus === "cancelled") && !task.settledAt) {
@@ -511,6 +520,7 @@ export class TaskStore {
       if (task.pendingApproval !== undefined) copy.pendingApproval = task.pendingApproval;
       if (task.queuePosition !== undefined) copy.queuePosition = task.queuePosition;
       if (task.historyLoaded !== undefined) copy.historyLoaded = task.historyLoaded;
+      if (task.holdReason !== undefined) copy.holdReason = task.holdReason;
       tasks.push(copy);
       byId[copy.taskId] = copy;
     }
