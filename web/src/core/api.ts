@@ -52,9 +52,18 @@ export interface SessionResult {
   expiresAt: number;
 }
 
+export interface DirEntry {
+  path: string;
+  name: string;
+  depth: number;
+  isGit: boolean;
+}
+
 export interface WorkspacesResult {
   online: boolean;
   workspaces: string[];
+  /** 白名单下扫描出的候选目录，供选择器使用 */
+  dirs?: DirEntry[];
   capacity?: Capacity;
 }
 

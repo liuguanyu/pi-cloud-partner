@@ -173,6 +173,7 @@ async function handleAnswer(
         v-else
         :tasks="state.view.tasks"
         :workspaces="state.workspaces"
+        :dirs="state.dirs"
         :capacity="state.capacity"
         :bridge-online="state.view.bridgeOnline"
         :primed="state.primed"

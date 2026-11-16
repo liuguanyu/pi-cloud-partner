@@ -171,12 +171,22 @@ func (e Envelope) Validate() error {
 
 // BridgeHello 是 bridge 连上后发送的第一帧。
 type BridgeHello struct {
-	DeviceID    string   `json:"deviceId"`
-	Version     int      `json:"version"`
-	Workspaces  []string `json:"workspaces,omitempty"`
-	Name        string   `json:"name,omitempty"`
-	MaxRunning  int      `json:"maxRunning,omitempty"`
-	LiveChildrn int      `json:"liveChildren,omitempty"`
+	DeviceID string `json:"deviceId"`
+	Version  int    `json:"version"`
+	// Dirs 是白名单下扫出来的候选目录，供手机端做选择器
+	Dirs        []DirEntry `json:"dirs,omitempty"`
+	Workspaces  []string   `json:"workspaces,omitempty"`
+	Name        string     `json:"name,omitempty"`
+	MaxRunning  int        `json:"maxRunning,omitempty"`
+	LiveChildrn int        `json:"liveChildren,omitempty"`
+}
+
+// DirEntry 是候选目录（与 protocol/ts/wire.ts#DirEntry 对齐）。
+type DirEntry struct {
+	Path  string `json:"path"`
+	Name  string `json:"name"`
+	Depth int    `json:"depth"`
+	IsGit bool   `json:"isGit"`
 }
 
 // BridgeWelcome 是云端对 hello 的应答，告知当前已授权的 pair 列表。

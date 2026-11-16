@@ -21,6 +21,7 @@ import { loadConfig, loadCredentials } from "./cloud/config.ts";
 import { Down, Up, envelope, type Envelope } from "./cloud/protocol.ts";
 import { Runner, type TaskRequest } from "./cloud/runner.ts";
 import { startConsole, type ConsoleHandle } from "./local/console.ts";
+import { scanWorkspaces, type DirEntry } from "./cloud/dirtree.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APPROVAL_EXTENSION = resolve(HERE, "..", "extensions", "approval.ts");
@@ -63,6 +64,15 @@ async function main(): Promise<void> {
     return;
   }
 
+  // 候选目录：连上时若缓存为空就现扫，之后每 5 分钟刷新一次
+  let dirCache: DirEntry[] = [];
+  const refreshDirs = async (): Promise<void> => {
+    dirCache = await scanWorkspaces(cfg.workspaces);
+    log("已扫描候选目录", { dirs: dirCache.length, git: dirCache.filter((d) => d.isGit).length });
+  };
+  await refreshDirs();
+  setInterval(() => void refreshDirs(), 5 * 60_000);
+
   const runner = new Runner({
     workspaces: cfg.workspaces,
     maxRunning: cfg.maxRunning,
@@ -90,6 +100,7 @@ async function main(): Promise<void> {
     workspaces: cfg.workspaces,
     maxRunning: cfg.maxRunning,
     getLiveChildren: () => runner.capacity().liveChildren,
+    getDirs: () => dirCache,
     heartbeatMs: cfg.heartbeatSeconds * 1000,
     onStatus: (status: CloudStatus, detail?: string) => {
       log(`连接状态 → ${status}`, detail ? { detail } : undefined);

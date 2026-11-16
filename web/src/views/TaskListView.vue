@@ -10,9 +10,18 @@ import { computed, ref, watch } from "vue";
 import type { Capacity } from "@wire";
 import type { TaskView } from "../core/store.ts";
 
+interface DirEntry {
+  path: string;
+  name: string;
+  depth: number;
+  isGit: boolean;
+}
+
 const props = defineProps<{
   tasks: TaskView[];
   workspaces: string[];
+  /** 白名单下扫描出的候选目录（git 仓库排在前面） */
+  dirs: DirEntry[];
   capacity?: Capacity;
   bridgeOnline: boolean;
   /** 首次同步完成前不要断言"离线" */
@@ -30,9 +39,32 @@ const prompt = ref("");
 const workspace = ref(props.workspaces[0] ?? "");
 const isolation = ref<"shared" | "worktree">("shared");
 const showComposer = ref(false);
+const manualMode = ref(false);
+
+/** 根目录在前，git 仓库次之，其余按名字（后端已排好序，这里只做缩进展示） */
+const selectableDirs = computed<DirEntry[]>(() => {
+  if (props.dirs.length > 0) return props.dirs;
+  // 兜底：只有白名单根目录
+  return props.workspaces.map((path) => ({
+    path,
+    name: path.split("/").filter(Boolean).pop() ?? path,
+    depth: 0,
+    isGit: false,
+  }));
+});
+
+function dirLabel(dir: DirEntry): string {
+  const indent = "\u00a0\u00a0".repeat(dir.depth);
+  const mark = dir.isGit ? "● " : "";
+  return `${indent}${mark}${dir.name}${dir.depth === 0 ? "  （根目录）" : ""}`;
+}
 
 // workspace 的默认值必须跟随 props 回填：组件挂载时白名单可能还没拉回来，
 // 只初始化一次会导致「下拉有选项、但内部值仍是空」从而永远禁用提交。
+watch(workspace, () => {
+  // 手动输入的内容会写回同一个变量，这里不做额外处理
+});
+
 watch(
   () => props.workspaces,
   (list) => {
@@ -113,10 +145,27 @@ function statusLabel(status: string): string {
 
     <div v-if="showComposer" class="composer">
       <label class="field">
-        <span class="label muted">工作目录</span>
+        <span class="label muted">
+          工作目录
+          <span v-if="props.dirs.length === 0" class="warn-inline">（尚未同步到目录列表，可手动输入）</span>
+        </span>
         <select v-model="workspace">
-          <option v-for="ws in props.workspaces" :key="ws" :value="ws">{{ ws }}</option>
+          <option v-for="dir in selectableDirs" :key="dir.path" :value="dir.path">
+            {{ dirLabel(dir) }}
+          </option>
         </select>
+        <input
+          v-if="manualMode"
+          v-model="workspace"
+          class="mono manual"
+          placeholder="/绝对路径（需在白名单内）"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+        />
+        <button v-if="props.dirs.length > 0" class="link" @click="manualMode = !manualMode">
+          {{ manualMode ? "从列表选择" : "手动输入路径" }}
+        </button>
       </label>
       <label class="check">
         <input v-model="isolation" type="checkbox" :true-value="'worktree'" :false-value="'shared'" />
@@ -193,6 +242,18 @@ function statusLabel(status: string): string {
   z-index: 40;
 }
 .field .label { font-size: 11px; display: block; margin-bottom: 4px; }
+.field .manual { margin-top: 6px; font-size: 13px; }
+.field .link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.warn-inline { color: var(--warn); }
 .check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-dim); }
 .check input { width: auto; }
 .actions { display: flex; gap: 10px; }

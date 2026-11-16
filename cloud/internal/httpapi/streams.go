@@ -157,6 +157,7 @@ func (s *Server) handleBridgeWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bridge := s.cfg.Hub.RegisterBridge(dev.ID, hello.Name, hello.Workspaces)
+	bridge.SetDirs(hello.Dirs)
 	defer s.cfg.Hub.UnregisterBridge(bridge)
 	s.cfg.Log.Info("bridge online", "device", dev.ID.String(), "name", hello.Name, "workspaces", len(hello.Workspaces))
 

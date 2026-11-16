@@ -78,10 +78,21 @@ export const PairEvents = {
 /** SSE 握手帧（云端在流开始时发，不属于 schema 的 Envelope） */
 export const StreamHello = "stream.hello";
 
+/** 白名单下的候选目录，供手机端做选择器 */
+export interface DirEntry {
+  path: string;
+  name: string;
+  /** 0 = 白名单根，1 = 一级，2 = 二级 */
+  depth: number;
+  isGit: boolean;
+}
+
 export interface BridgeHello {
   deviceId: string;
   version: number;
   workspaces: string[];
+  /** 扫出来的候选目录（含 git 标记），让手机端能直接选而不是手打路径 */
+  dirs?: DirEntry[];
   name: string;
   maxRunning: number;
   liveChildren: number;

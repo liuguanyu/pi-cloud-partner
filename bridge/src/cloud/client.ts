@@ -25,6 +25,8 @@ export interface CloudClientOptions {
   workspaces: string[];
   maxRunning: number;
   getLiveChildren: () => number;
+  /** 每次（重）连时取一次候选目录，用于 hello 帧 */
+  getDirs?: () => Array<{ path: string; name: string; depth: number; isGit: boolean }>;
   /** 心跳间隔，默认 30s（实测链路空闲 130s 不断，留足余量） */
   heartbeatMs?: number;
   /** 握手超时 */
@@ -160,6 +162,7 @@ export class CloudClient {
           deviceId: this.#opts.deviceId,
           version: PROTOCOL_VERSION,
           workspaces: this.#opts.workspaces,
+          ...(this.#opts.getDirs ? { dirs: this.#opts.getDirs() } : {}),
           name: this.#opts.deviceName,
           maxRunning: this.#opts.maxRunning,
           liveChildren: this.#opts.getLiveChildren(),

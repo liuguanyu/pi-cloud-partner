@@ -34,6 +34,8 @@ export interface AppState {
   view: AppView;
   sseStatus: SseStatus;
   workspaces: string[];
+  /** 白名单下可选的目录（含 git 标记） */
+  dirs: Array<{ path: string; name: string; depth: number; isGit: boolean }>;
   bridgeOnline: boolean;
   capacity?: Capacity;
   pairs: PairView[];
@@ -73,6 +75,7 @@ export class AppController {
   #error: string | undefined;
   #sseStatus: SseStatus = "idle";
   #workspaces: string[] = [];
+  #dirs: Array<{ path: string; name: string; depth: number; isGit: boolean }> = [];
   #bridgeOnline = false;
   #capacity: Capacity | undefined;
   #pairs: PairView[] = [];
@@ -102,6 +105,7 @@ export class AppController {
       view: this.store.snapshot(),
       sseStatus: this.#sseStatus,
       workspaces: this.#workspaces,
+      dirs: this.#dirs,
       bridgeOnline: this.#bridgeOnline,
       pairs: this.#pairs,
       credentials: this.#creds.load(),
@@ -158,6 +162,7 @@ export class AppController {
     this.store.reset();
     this.#pairs = [];
     this.#workspaces = [];
+    this.#dirs = [];
     this.#setPhase("need-pair");
   }
 
@@ -320,6 +325,7 @@ export class AppController {
     try {
       const result = await this.#api.workspaces(pairToken, pairId);
       this.#workspaces = result.workspaces;
+      this.#dirs = result.dirs ?? [];
       this.#bridgeOnline = result.online;
       this.#capacity = result.capacity;
       this.#primed = true;

@@ -312,6 +312,7 @@ func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"online":     true,
 		"workspaces": bridge.Workspaces(),
+		"dirs":       bridge.Dirs(),
 		"capacity":   bridge.Capacity(),
 	})
 }

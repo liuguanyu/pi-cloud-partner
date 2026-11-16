@@ -150,6 +150,21 @@ node src/daemon.ts
 `Authorization: Device <token>`（实测内置实现只会报 `Unexpected server response` 或无鉴权连接）。
 `ws` 自身零依赖，并支持 headers / ping / 背压。
 
+### 候选目录（手机端的工作目录选择器）
+
+bridge 启动时（之后每 5 分钟）扫一遍 `workspaces` 下的目录，随 `bridge.hello`
+上报给云端，手机端的下拉因此能直接选仓库而不是手打绝对路径：
+
+```
+扫描规则：深度 ≤2；一级全收（上限 400）；二级只对 git 仓库下钻（每仓 ≤6、总共 ≤120）
+排序：根目录 → git 仓库（标 ●）→ 其余按名字
+跳过：隐藏目录、node_modules/dist/build/target/vendor 等
+实测：devspace 下 205 条 / 44 个 git 仓库 / 帧约 19KB / 扫描 19ms
+```
+
+新增目录不会立刻出现（等下一次扫描），也可以在手机端切「手动输入路径」——
+后端仍会按白名单前缀校验。
+
 ### 终端避让（`terminalBusyWindowSeconds`，默认 60）
 
 你在终端里用 pi 干活时，手机端下发的任务**不会**扎进去抢同一个目录：

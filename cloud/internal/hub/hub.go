@@ -36,6 +36,7 @@ type Bridge struct {
 
 	mu         sync.RWMutex
 	workspaces []string
+	dirs       []protocol.DirEntry
 	capacity   protocol.Capacity
 }
 
@@ -50,6 +51,20 @@ func (b *Bridge) Workspaces() []string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return append([]string(nil), b.workspaces...)
+}
+
+// Dirs 返回候选目录（白名单下扫描结果）。
+func (b *Bridge) Dirs() []protocol.DirEntry {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return append([]protocol.DirEntry(nil), b.dirs...)
+}
+
+// SetDirs 更新候选目录。
+func (b *Bridge) SetDirs(dirs []protocol.DirEntry) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.dirs = append([]protocol.DirEntry(nil), dirs...)
 }
 
 // Capacity 返回最近一次上报的容量。
