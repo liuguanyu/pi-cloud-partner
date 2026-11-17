@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/leon82/pcp/cloud/internal/hub"
@@ -377,9 +378,19 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 
 // ── 小工具 ────────────────────────────────────────────────────
 
+// containsPath 判断 want 是否在白名单内**或其子目录**。
+//
+// 语义必须与 bridge 侧（runner.ts#workspaceAllowed）完全一致：
+// 白名单是「根目录」，允许在其下任意子目录开任务（pi 是按目录工作的）。
+// 之前这里只做精确匹配，导致手机端选了子目录就被拒——而 bridge 明明允许。
 func containsPath(allowed []string, want string) bool {
-	for _, a := range allowed {
-		if a == want || filepath.Clean(a) == filepath.Clean(want) {
+	cleanWant := filepath.Clean(want)
+	for _, root := range allowed {
+		cleanRoot := filepath.Clean(root)
+		if cleanWant == cleanRoot {
+			return true
+		}
+		if strings.HasPrefix(cleanWant, cleanRoot+string(filepath.Separator)) {
 			return true
 		}
 	}
