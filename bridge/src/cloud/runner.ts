@@ -19,6 +19,8 @@ import { PiClient, isUiRequest, type PiRecord, type UiRequest } from "../pi/clie
 import { execControl, type ControlResult } from "../control/index.ts";
 import { isWorkspaceBusyByTerminal } from "./busy.ts";
 import { envelope, Up, type Envelope } from "./protocol.ts";
+import { INLINE_IMAGE_B64_LIMIT, type BlobUploader } from "./blobupload.ts";
+import { rewriteLargeImages } from "./image-transform.ts";
 
 export interface RunnerOptions {
   workspaces: string[];
@@ -40,6 +42,11 @@ export interface RunnerOptions {
   terminalBusyWindowMs: number;
   onUp: (env: Envelope) => void;
   log: (msg: string, data?: Record<string, unknown>) => void;
+  /**
+   * 图片转存上传器。agent 产出的内联 base64 大图（超过 INLINE_IMAGE_B64_LIMIT）
+   * 转发前传成 blob，事件里换成引用。未提供时大图降级为占位（见 #forwardPiEvent）。
+   */
+  uploader?: BlobUploader;
 }
 
 export interface TaskRequest {
@@ -196,9 +203,11 @@ export class Runner {
       sessionDir: this.#opts.sessionDir,
       sinceMs: req.sinceMs,
     });
+    // 历史块里的内联大图 → blob 引用，避免 historyData 帧被撑大
+    const blocks = await this.#blobsifyHistoryImages(result.blocks, req.pairId || this.#pairIdFor(req.taskId));
     this.#opts.log("历史读取", {
       taskId: req.taskId,
-      blocks: result.blocks.length,
+      blocks: blocks.length,
       missing: Boolean(result.missing),
     });
     this.#opts.onUp(
@@ -207,12 +216,42 @@ export class Runner {
         taskId: req.taskId,
         payload: {
           taskId: req.taskId,
-          blocks: result.blocks,
+          blocks,
           ...(result.missing ? { missing: true } : {}),
           ...(result.truncated ? { truncated: true } : {}),
         },
       }),
     );
+  }
+
+  /** 把历史里的内联大图换成 blobImage 引用；小图与无上传器时原样保留。 */
+  async #blobsifyHistoryImages(blocks: unknown[], pairId: string | undefined): Promise<unknown[]> {
+    const uploader = this.#opts.uploader;
+    if (!uploader || !pairId) return blocks;
+    const out: unknown[] = [];
+    for (const raw of blocks) {
+      const block = raw as {
+        kind?: string;
+        data?: string;
+        mimeType?: string;
+        blobId?: string;
+      };
+      if (block.kind === "image" && typeof block.data === "string" && block.data.length > INLINE_IMAGE_B64_LIMIT) {
+        const mimeType = block.mimeType ?? "image/png";
+        const name = this.#nameForMime(mimeType);
+        const result = await uploader.uploadImage(block.data, mimeType, pairId, name);
+        if (result) {
+          out.push({ kind: "blobImage", blobId: result.blobId, mimeType: result.mimeType ?? mimeType, name: result.name ?? name });
+          continue;
+        }
+        // 转存失败：历史里的图丢了就丢了，用占位替代，不阻塞其它块
+        this.#opts.log("历史图片转存失败，已降级", { mimeType, bytes: block.data.length });
+        out.push({ kind: "text", text: "（历史图片过大，未能转存）" });
+        continue;
+      }
+      out.push(block);
+    }
+    return out;
   }
 
   /** 历史请求可能针对已结束的任务，此时从「最近见过的任务」里找回 pairId。 */
@@ -563,12 +602,20 @@ export class Runner {
         this.#settleWaiters.get(task.req.taskId)?.();
         this.#settleWaiters.delete(task.req.taskId);
       }
-      this.#forwardPiEvent(child, rec);
+      void this.#forwardPiEvent(child, rec);
     });
     child.client.onUiRequest((req) => this.#forwardUiRequest(child, req));
   }
 
-  #forwardPiEvent(child: Child, rec: PiRecord): void {
+  /**
+   * 转发前把超大的内联图片换成 blob 引用。
+   *
+   * 只有 assistant_message（权威终态）里的内联图片可能超大；message_update 只带
+   * text/thinking delta，不会带 base64 图片。改写是异步的：命中大图时先不转发，
+   * 上传完成后再把**改写后的**事件发出去。上传失败则降级为占位文本，避免把
+   * 超大 base64 硬塞进 wss 帧（会撞 4MB 读限）。
+   */
+  async #forwardPiEvent(child: Child, rec: PiRecord): Promise<void> {
     const task = child.task;
     if (!task) return;
 
@@ -584,6 +631,9 @@ export class Runner {
       }
     }
 
+    // 命中需要改写的事件：把大图片换 blob。返回改写后的记录（可能相同）。
+    const outgoing = await this.#materializeInlineImages(child, rec);
+
     const focused = this.#focusedTaskId === task.req.taskId;
     if (focused) {
       this.#up(
@@ -591,13 +641,12 @@ export class Runner {
           pairId: task.req.pairId,
           taskId: task.req.taskId,
           epoch: task.epoch,
-          payload: rec,
+          payload: outgoing,
         }),
       );
       return;
     }
 
-    // 非聚焦：只按节流推摘要，避免多任务刷屏把带宽吃光
     const now = Date.now();
     if (now - task.lastSummaryAt >= SUMMARY_INTERVAL_MS) {
       task.lastSummaryAt = now;
@@ -610,6 +659,61 @@ export class Runner {
         }),
       );
     }
+  }
+
+  /**
+   * 扫描事件里的内联 base64 图片，把超阈值的转成 blob 引用。
+   *
+   * 结构：pi 的 assistant_message 事件形如
+   *   { type, message: { role:"assistant", content: [ {type:"text",...}, {type:"image",data,mimeType}, ... ] } }
+   * 我们递归找所有 { type:"image", data, mimeType } 块，逐个判断是否需要转存。
+   * 小图直接内联（省一次往返）；大图上传成 blob，事件里换成
+   *   { type:"blobImage", blobId, mimeType, name }
+   * 手机 store 据此用签名 URL 渲染。
+   */
+  async #materializeInlineImages(child: Child, rec: PiRecord): Promise<PiRecord> {
+    const content = this.#extractImageContent(rec);
+    if (!content) return rec;
+    const pairId = child.task?.req.pairId ?? this.#lastPairId;
+    const uploader = this.#opts.uploader;
+    const { content: out, changed } = await rewriteLargeImages(content, {
+      limit: INLINE_IMAGE_B64_LIMIT,
+      // 无上传器或无 pair 归属时 process 返回 null → 占位降级（避免撞帧上限）
+      process: async (block) => {
+        if (!uploader || !pairId) return null;
+        const mimeType = block.mimeType ?? "image/png";
+        const result = await uploader.uploadImage(block.data, mimeType, pairId, this.#nameForMime(mimeType));
+        if (!result) return null;
+        return {
+          type: "blobImage",
+          blobId: result.blobId,
+          mimeType: result.mimeType ?? mimeType,
+          name: result.name,
+        };
+      },
+      fallback: () => ({ type: "text", text: "（图片过大且未能转存，无法显示）" }),
+    });
+    if (!changed) return rec;
+    return { ...rec, message: { ...((rec as any).message ?? {}), content: out } };
+  }
+
+  /** 从事件里取出可能是图片数组的 content；没有就返回 null。 */
+  #extractImageContent(rec: PiRecord): unknown[] | null {
+    const msg = (rec as { message?: { role?: string; content?: unknown } }).message;
+    if (msg && Array.isArray(msg.content)) return msg.content as unknown[];
+    return null;
+  }
+
+  #isImageBlock(block: unknown): block is { type: string; data: string; mimeType?: string } {
+    if (typeof block !== "object" || block === null) return false;
+    const b = block as { type?: unknown; data?: unknown };
+    return b.type === "image" && typeof b.data === "string";
+  }
+
+  #nameForMime(mime: string): string {
+    const base = mime.includes("/") ? mime.split("/")[1] : mime;
+    const ext = base?.split("+")[0] || "png";
+    return `agent-${Date.now()}.${ext}`;
   }
 
   #forwardUiRequest(child: Child, req: UiRequest): void {

@@ -8,6 +8,7 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import MessageBlock from "../components/MessageBlock.vue";
 import ToolCard from "../components/ToolCard.vue";
+import ImageBlock from "../components/ImageBlock.vue";
 import ApprovalSheet from "../components/ApprovalSheet.vue";
 import { isTerminal, type TaskView } from "../core/store.ts";
 import type { UiRequestPayload } from "@wire";
@@ -133,6 +134,19 @@ function send(): void {
             v-else-if="block.kind === 'text' || block.kind === 'user' || block.kind === 'thinking'"
             :kind="block.kind"
             :text="block.text"
+          />
+          <ImageBlock
+            v-else-if="block.kind === 'image'"
+            kind="image"
+            :data="block.data"
+            :mimeType="block.mimeType"
+          />
+          <ImageBlock
+            v-else-if="block.kind === 'blobImage'"
+            kind="blobImage"
+            :blobId="block.blobId"
+            :mimeType="block.mimeType"
+            :name="block.name"
           />
         </template>
 

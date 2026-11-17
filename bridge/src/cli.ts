@@ -14,6 +14,7 @@ import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { PiClient, isUiRequest, type PiRecord, type UiRequest } from "./pi/client.ts";
+import { rewriteLargeImages } from "./cloud/image-transform.ts";
 import { execControl, parseInput } from "./control/index.ts";
 import { listSessions, resolveSession } from "./sessions/index.ts";
 
@@ -216,6 +217,9 @@ async function selftest(): Promise<number> {
     console.log(`${ok ? "✅" : "❌"} ${name}${detail ? `  ${C.dim(detail)}` : ""}`);
   };
 
+  // ── 纯函数检查（不依赖 pi）：live 流与历史回放共用的图片改写规则 ──
+  await checkImageRewrite(record);
+
   const client = new PiClient({ cwd: process.cwd(), args: ["--no-session"] });
   const t0 = Date.now();
   try {
@@ -252,6 +256,73 @@ async function selftest(): Promise<number> {
   const failed = checks.filter(([, ok]) => !ok).length;
   console.log(`\n${failed === 0 ? C.green("全部通过") : C.red(`${failed} 项失败`)}`);
   return failed === 0 ? 0 : 1;
+}
+
+/** 验证 rewriteLargeImages：小图内联、大图换引用、转存失败降级、无图原样。 */
+async function checkImageRewrite(
+  record: (name: string, ok: boolean, detail?: string) => void,
+): Promise<void> {
+  const small = "a".repeat(100); // ≤ limit，应内联
+  const big = "a".repeat(10_000); // > limit，应交给 process
+  const limit = 512;
+
+  // 1) 小图 + 无 process 命中
+  const r1 = await rewriteLargeImages(
+    [{ type: "image", data: small, mimeType: "image/png" }],
+    { limit, process: () => ({ type: "blobImage", blobId: "b_x" }) },
+  );
+  record(
+    "改写:小图保持内联",
+    !r1.changed && (r1.content[0] as { data?: string } | undefined)?.data === small,
+  );
+
+  // 2) 大图 process 成功 → 换成 blobImage
+  const r2 = await rewriteLargeImages(
+    [{ type: "image", data: big, mimeType: "image/png" }],
+    { limit, process: () => ({ type: "blobImage", blobId: "b_x" }) },
+  );
+  record(
+    "改写:大图换 blob 引用",
+    r2.changed && (r2.content[0] as { blobId?: string })?.blobId === "b_x",
+  );
+
+  // 3) 大图 process 返回 null → fallback 占位
+  const r3 = await rewriteLargeImages(
+    [{ type: "image", data: big, mimeType: "image/png" }],
+    {
+      limit,
+      process: () => null,
+      fallback: () => ({ type: "text", text: "占位" }),
+    },
+  );
+  record(
+    "改写:转存失败用占位",
+    r3.changed && (r3.content[0] as { text?: string })?.text === "占位",
+  );
+
+  // 4) 无图片块 → 原样，changed=false
+  const r4 = await rewriteLargeImages(
+    [{ type: "text", text: "hi" }],
+    { limit, process: () => ({ blobId: "b_x" }) },
+  );
+  record("改写:无图原样", !r4.changed && (r4.content[0] as { text?: string })?.text === "hi");
+
+  // 5) 混合：小图内联 + 大图换引用 + 文本保留
+  const r5 = await rewriteLargeImages(
+    [
+      { type: "text", text: "before" },
+      { type: "image", data: small, mimeType: "image/png" },
+      { type: "image", data: big, mimeType: "image/jpeg" },
+    ],
+    { limit, process: (b) => ({ type: "blobImage", blobId: "b_" + b.data.slice(0, 2) }) },
+  );
+  record(
+    "改写:混合块顺序正确",
+    r5.changed &&
+      (r5.content[0] as { text?: string })?.text === "before" &&
+      (r5.content[1] as { data?: string })?.data === small &&
+      (r5.content[2] as { blobId?: string })?.blobId === "b_" + big.slice(0, 2),
+  );
 }
 
 async function runDebug(client: PiClient, command: string, cwd: string): Promise<string> {

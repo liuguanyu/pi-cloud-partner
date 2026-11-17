@@ -372,6 +372,13 @@ export class AppController {
     };
   }
 
+  /** 把 blobId 换成可直接放进 <img src> 的签名链接（内部缓存）。 */
+  async resolveBlobUrl(blobId: string, force = false): Promise<string> {
+    const { pairToken, pairId } = this.#creds.load();
+    if (!pairToken || !pairId) throw new Error("尚未就绪");
+    return this.#api.blobUrl(pairToken, pairId, blobId, force);
+  }
+
   async startTask(input: {
     prompt: string;
     workspace: string;

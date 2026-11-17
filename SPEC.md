@@ -284,6 +284,21 @@ bridge       GET /blob/<id>（device 凭据）→ 图片转 ImageContent；
 2. **文件不内联进 prompt**：pi 的 prompt 只接受文本与图片；二进制塞进去会被截断。
    落盘 + 给路径，让 agent 用自己的 read/grep 处理，才是可靠的。
 
+**反向（agent → 手机）** 用同一个管道：
+
+```
+bridge 上传也用 device 凭据 POST /api/blob（归属到 device 自己的 pair）
+事件里的内联图片超过 512KB（base64）→ 转发前传成 blob，事件换成 {type:"blobImage", blobId}
+手机 store 见 blobImage → 换签名 URL → <img> 渲染（<img> 带不了 Authorization）
+转存失败降级为占位文本，绝不把大图硬塞进 wss 帧（云端读限 4MB）
+历史回放同理：JSONL 里的大图在回传前转 blob，避免 historyData 帧被撑大
+```
+
+一个反直觉的实测结论：**pi 会把 RPC 传入的图片从 user 消息里剥掉**——
+`message_end` 回传和磁盘 JSONL 里 user 的 content 都只剩 `text` 块。
+所以"用户传了什么图"在事件流里拿不到回显，只能靠 bridge 自己记（后续用
+`pcp_send` 工具让 agent 主动回传文件/截图，才是 agent→手机的正解）。
+
 保留期 7 天（与 SPEC §6 一致），GC 待做。
 
 ## 8. 里程碑与验收标准

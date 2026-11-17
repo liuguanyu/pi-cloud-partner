@@ -135,6 +135,42 @@ func TestBlobMimeFallbackByExtension(t *testing.T) {
 	}
 }
 
+// bridge 用 device 凭据上传（agent 产出的图片转存），归属到该 device 的 pair
+func TestBlobUploadByDevice(t *testing.T) {
+	srv, _, _, devTok, _, pairRef := newBlobEnv(t)
+	content := []byte("agent 产出的图")
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	header := textproto.MIMEHeader{}
+	header.Set("Content-Disposition", `form-data; name="file"; filename="agent-shot.png"`)
+	header.Set("Content-Type", "image/png")
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write(content)
+	writer.Close()
+
+	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/api/blob?pairId=%s", srv.URL, pairRef), &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Device "+devTok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("device 上传应 201，实际 %d: %s", resp.StatusCode, b)
+	}
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if ref, _ := out["blobId"].(string); !strings.HasPrefix(ref, "b_") {
+		t.Fatalf("blobId 格式错误: %v", out["blobId"])
+	}
+}
+
 func TestBlobRejectsOversize(t *testing.T) {
 	srv, _, _, _, pairTok, pairRef := newBlobEnv(t)
 	big := bytes.Repeat([]byte("x"), 16<<20+1024)

@@ -15,14 +15,22 @@ import { createJsonlReader } from "../pi/framing.ts";
 import { defaultSessionDir } from "../sessions/index.ts";
 
 export interface HistoryBlock {
-  kind: "text" | "thinking" | "user" | "tool";
+  kind: "text" | "thinking" | "user" | "tool" | "image" | "blobImage";
   text?: string;
   toolCallId?: string;
   toolName?: string;
   argsText?: string;
   resultText?: string;
   isError?: boolean;
+  /** image 块：内联 base64（小图）；blobImage 块：blob 引用（大图） */
+  data?: string;
+  mimeType?: string;
+  blobId?: string;
+  name?: string;
 }
+
+/** 历史回放里内联图片的 base64 上限（与 live 流一致的量级） */
+const HISTORY_IMAGE_B64_LIMIT = 512 * 1024;
 
 export interface HistoryOptions {
   sessionDir?: string;
@@ -129,6 +137,17 @@ export async function loadSessionHistory(
         if (role === "user") {
           const text = textOf(message.content).trim();
           if (text) blocks.push({ kind: "user", text });
+          // 用户发的截图：content 里是 image 块，同样受历史帧上限约束
+          const content = message.content;
+          if (Array.isArray(content)) {
+            for (const raw of content) {
+              if (typeof raw !== "object" || raw === null) continue;
+              const img = raw as { type?: unknown; data?: unknown; mimeType?: unknown };
+              if (img.type === "image" && typeof img.data === "string" && img.data.length <= HISTORY_IMAGE_B64_LIMIT) {
+                blocks.push({ kind: "image", data: img.data, mimeType: typeof img.mimeType === "string" ? img.mimeType : "image/png" });
+              }
+            }
+          }
           return;
         }
 
@@ -142,6 +161,13 @@ export async function loadSessionHistory(
               blocks.push({ kind: "text", text: block.text });
             } else if (block.type === "thinking" && block.text) {
               blocks.push({ kind: "thinking", text: block.text });
+            } else if (block.type === "image" && typeof (block as { data?: unknown }).data === "string") {
+              // 会话文件里图片是内联 base64。历史走 HTTP POST，同样有帧上限：
+              // 大图不回放（live 流里它已经变成 blob 引用了，磁盘上的原件只供本地看）
+              const img = block as { data: string; mimeType?: string };
+              if (img.data.length <= HISTORY_IMAGE_B64_LIMIT) {
+                blocks.push({ kind: "image", data: img.data, mimeType: img.mimeType ?? "image/png" });
+              }
             } else if ((block.type === "toolCall" || block.type === "tool_call") && block.id) {
               const toolBlock: HistoryBlock = {
                 kind: "tool",

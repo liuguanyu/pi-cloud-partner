@@ -23,6 +23,7 @@ import { Runner, type TaskRequest } from "./cloud/runner.ts";
 import { startConsole, type ConsoleHandle } from "./local/console.ts";
 import { scanWorkspaces, type DirEntry } from "./cloud/dirtree.ts";
 import { materializeBlobs, type BlobRef } from "./cloud/attachments.ts";
+import { createUploader } from "./cloud/blobupload.ts";
 import { httpBase } from "./local/console.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -89,6 +90,7 @@ async function main(): Promise<void> {
     projectTrust: cfg.projectTrust,
     approvalPolicy: cfg.approvalPolicy,
     terminalBusyWindowMs: cfg.terminalBusyWindowSeconds * 1000,
+    uploader: createUploader({ baseUrl: base, deviceToken: creds.deviceToken, log }),
     onUp: (env) => {
       if (!client.send(env)) {
         // 离线时上行帧直接丢弃：这些事件属于实时流，桥接侧有 ring buffer 兜底

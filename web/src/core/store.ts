@@ -31,7 +31,9 @@ export type Block =
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string }
   | { kind: "tool"; toolCallId: string; toolName: string; argsText: string; resultText?: string; isError?: boolean; durationMs?: number; done: boolean }
-  | { kind: "user"; text: string };
+  | { kind: "user"; text: string }
+  | { kind: "image"; data: string; mimeType: string }
+  | { kind: "blobImage"; blobId: string; mimeType?: string; name?: string };
 
 export interface ApprovalRequest extends UiRequestPayload {
   taskId: string;
@@ -590,6 +592,18 @@ function blocksFromContent(content: unknown): Block[] {
       out.push({ kind: "text", text: block.text });
     } else if (block.type === "thinking" && typeof block.text === "string") {
       out.push({ kind: "thinking", text: block.text });
+    } else if (
+      block.type === "image" &&
+      typeof (block as { data?: unknown }).data === "string"
+    ) {
+      const img = block as { data: string; mimeType?: string };
+      out.push({ kind: "image", data: img.data, mimeType: img.mimeType ?? "image/png" });
+    } else if (
+      block.type === "blobImage" &&
+      typeof (block as { blobId?: unknown }).blobId === "string"
+    ) {
+      const ref = block as { blobId: string; mimeType?: string; name?: string };
+      out.push({ kind: "blobImage", blobId: ref.blobId, mimeType: ref.mimeType, name: ref.name });
     } else if ((block.type === "toolCall" || block.type === "tool_call") && block.id) {
       out.push({
         kind: "tool",

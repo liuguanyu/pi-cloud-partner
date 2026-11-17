@@ -54,9 +54,28 @@ func (s *Server) verifyBlobSig(id model.ID, expires int64, sig string, now int64
 // 用 multipart 而不是 base64 JSON：base64 会膨胀 33%，且 16MB 的图直接进 JSON
 // 会撑爆 wss 帧与内存。所有大对象都走这里，事件流里只传 blobId。
 func (s *Server) handleBlobUpload(w http.ResponseWriter, r *http.Request) {
-	pair, err := s.requirePairToken(r, r.URL.Query().Get("pairId"))
-	if err != nil {
-		s.fail(w, err)
+	pairRef := r.URL.Query().Get("pairId")
+
+	// 两种上传者：
+	//   手机（pairToken）—— 上传用户附件
+	//   bridge（deviceToken）—— 把 agent 产出的图片转存成 blob
+	var pairID model.ID
+	if pair, err := s.requirePairToken(r, pairRef); err == nil {
+		pairID = pair.ID
+	} else if dev, derr := s.requireDevice(r); derr == nil {
+		target, perr := protocol.ParseRef(pairRef, "p")
+		if perr != nil {
+			writeErr(w, http.StatusBadRequest, "bad_request", "device 上传需要 pairId")
+			return
+		}
+		owned, perr := s.cfg.Store.PairByID(r.Context(), target)
+		if perr != nil || owned.DeviceID != dev.ID {
+			s.fail(w, errUnauthorized)
+			return
+		}
+		pairID = owned.ID
+	} else {
+		s.fail(w, errUnauthorized)
 		return
 	}
 	if s.blobDir == "" {
@@ -122,7 +141,7 @@ func (s *Server) handleBlobUpload(w http.ResponseWriter, r *http.Request) {
 
 	blob := model.Blob{
 		ID:         id,
-		PairID:     pair.ID,
+		PairID:     pairID,
 		Kind:       kind,
 		Mime:       mime,
 		Name:       header.Filename,

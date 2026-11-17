@@ -13,6 +13,7 @@ export interface BridgeApi {
   actions: {
     claim(code: string, deviceName: string): Promise<void>;
     upload(file: File): Promise<{ blobId: string; kind?: string; name?: string; mimeType?: string }>;
+    resolveBlobUrl(blobId: string, force?: boolean): Promise<string>;
     startTask(input: {
       prompt: string;
       workspace: string;
@@ -61,6 +62,7 @@ export function useBridge(): BridgeApi {
     actions: {
       claim: (code, deviceName) => app.claim(code, deviceName),
       upload: (file) => app.upload(file),
+      resolveBlobUrl: (blobId, force) => app.resolveBlobUrl(blobId, force),
       startTask: (input) => app.startTask(input),
       steerTask: (taskId, text, mode) => app.steerTask(taskId, text, mode),
       cancelTask: (taskId) => app.cancelTask(taskId),

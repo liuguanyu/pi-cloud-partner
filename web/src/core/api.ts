@@ -6,6 +6,9 @@
  */
 import type { Capacity, TaskSummary } from "@wire";
 
+// 签名 URL 缓存：<img src> 无法带 Authorization，必须换成预签名链接
+const blobUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -150,15 +153,24 @@ export class ApiClient {
     return payload as UploadResult;
   }
 
-  /** 换取可直接放进 <img src> 的签名链接（浏览器 <img> 带不了 Authorization）。 */
-  async blobUrl(pairToken: string, pairId: string, blobId: string): Promise<{ url: string }> {
+  /** 换取可直接放进 <img src> 的签名链接（浏览器 <img> 带不了 Authorization）。
+   *  按 blobId 缓存 50 分钟（签名 1 小时有效），同一图多个任务复用只请求一次。 */
+  async blobUrl(pairToken: string, pairId: string, blobId: string, force = false): Promise<string> {
     const short = blobId.replace(/^b_/, "");
-    return this.#json(
+    const key = `${pairId}|${short}`;
+    const cached = blobUrlCache.get(key);
+    const now = Date.now();
+    if (!force && cached && cached.expiresAt > now) return cached.url;
+    const result = await this.#json<{ url: string; expires: number }>(
       "GET",
       `/api/blob/${encodeURIComponent(short)}/url?pairId=${encodeURIComponent(pairId)}`,
       { kind: "bearer", token: pairToken },
       undefined,
     );
+    if (result.url) {
+      blobUrlCache.set(key, { url: result.url, expiresAt: now + 50 * 60 * 1000 });
+    }
+    return result.url;
   }
 
   workspaces(pairToken: string, pairId: string): Promise<WorkspacesResult> {
