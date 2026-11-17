@@ -29,6 +29,12 @@ export interface BridgeConfig {
   /** 是否加载工具审批扩展 */
   approval: boolean;
   /**
+   * 审批策略：
+   *   balanced（默认）—— 只读 + 工作目录内写文件 自动放行，其余要问
+   *   strict          —— 除只读外全部要问
+   */
+  approvalPolicy: "balanced" | "strict";
+  /**
    * project trust：RPC 模式下没人能回答弹窗，必须显式给出。
    * deny（默认）= 不加载项目级 skills/settings/MCP；approve = 加载。
    */
@@ -72,6 +78,7 @@ const DEFAULTS: Omit<BridgeConfig, "serverUrl"> = {
   maxLiveChildren: 4,
   idleRecycleMinutes: 10,
   approval: true,
+  approvalPolicy: "balanced",
   projectTrust: "deny",
   heartbeatSeconds: 30,
   terminalBusyWindowSeconds: 60,
@@ -113,6 +120,9 @@ export function loadConfig(): BridgeConfig {
   }
   if (merged.projectTrust !== "approve" && merged.projectTrust !== "deny") {
     throw new Error('projectTrust 只能是 "approve" 或 "deny"');
+  }
+  if (merged.approvalPolicy !== "balanced" && merged.approvalPolicy !== "strict") {
+    throw new Error('approvalPolicy 只能是 "balanced" 或 "strict"');
   }
   return merged;
 }

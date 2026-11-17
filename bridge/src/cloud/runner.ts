@@ -29,6 +29,8 @@ export interface RunnerOptions {
   sessionDir?: string;
   /** 审批扩展路径；为空表示不加载（危险，仅调试） */
   approvalExtension?: string;
+  /** 审批策略，透传给 pi 子进程里的审批扩展 */
+  approvalPolicy: "balanced" | "strict";
   /** deny = 不加载项目级资源（默认、安全）；approve = 加载 */
   projectTrust: "approve" | "deny";
   /**
@@ -532,6 +534,8 @@ export class Runner {
     const client = new PiClient({
       cwd: workspace,
       args,
+      // 审批扩展在 pi 进程里读这个环境变量
+      env: { PCP_APPROVAL_POLICY: this.#opts.approvalPolicy },
       onStderr: (chunk) => this.#opts.log("pi stderr", { chunk: chunk.trim().slice(0, 200) }),
     });
     await client.start();

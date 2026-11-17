@@ -46,6 +46,7 @@ async function main(): Promise<void> {
     maxRunning: cfg.maxRunning,
     trust: cfg.projectTrust,
     approval: cfg.approval,
+    approvalPolicy: cfg.approvalPolicy,
     terminalAvoidance: cfg.terminalBusyWindowSeconds > 0 ? `${cfg.terminalBusyWindowSeconds}s` : "off",
   });
 
@@ -82,6 +83,7 @@ async function main(): Promise<void> {
     sessionDir: cfg.sessionDir,
     approvalExtension: cfg.approval ? APPROVAL_EXTENSION : undefined,
     projectTrust: cfg.projectTrust,
+    approvalPolicy: cfg.approvalPolicy,
     terminalBusyWindowMs: cfg.terminalBusyWindowSeconds * 1000,
     onUp: (env) => {
       if (!client.send(env)) {

@@ -53,6 +53,31 @@ extensions/approval.ts pi 工具审批闸门（tool_call 钩子 + ctx.ui.confirm
 **3. run 进行中的上下文替换命令排队**
 `/resume` `/new` `/fork` `/clone` `/compact` 在 run 未结束时进队列，`agent_settled` 后自动执行，并提示"将在当前任务结束后执行"。
 
+## 审批策略（`approvalPolicy`）
+
+手机上被审批弹窗淹没是早期实现的问题：判定写成"含 `&&` 就不放行"，
+于是 `ls -la a && echo --- && ls -la b` 这种纯读命令也要人点一次。
+
+现在按三类风险分开处理：
+
+| 类别 | 行为 |
+|---|---|
+| 只读工具 `read/grep/find/ls` | 放行 |
+| **只读 shell（支持 `&&` `\|` `;` 组合）** | 放行 |
+| 工作目录内的 `write/edit` | `balanced` 放行；`strict` 询问 |
+| 其余（shell 副作用、目录外路径、跑脚本、网络、git 写操作） | 必问 |
+
+只读 shell 的判定：按未加引号的分隔符拆段，**逐段**检查首词是否在白名单内
+（`ls/cat/grep/rg/find/git status/diff/log…`），只允许 `2>/dev/null` 这类丢弃式重定向；
+出现 `>` 写文件、`$( )`、反引号、`sudo`、`node script.js` 一律要问。
+
+`balanced` 是默认值（自己的机器、自己选的目录，改文件就是任务本身）；
+要最保守就设 `"approvalPolicy": "strict"`。
+
+27 个用例覆盖判定规则（复合只读放行、`ls > f` 拦下、`git push` 拦下、
+`node x.js` 拦下、`cat a < b` 拦下等），另用真 pi 验证了三种场景：
+复合只读 0 弹窗、目录内 write 0 弹窗、目录外 write 1 弹窗。
+
 ## 审批闸门
 
 `extensions/approval.ts` 挂在 `tool_call` 上：只读工具（`read/grep/find/ls`）与白名单 shell 命令（`ls`/`git status`/…，且不含管道与串联）直接放行，其余一律 `ctx.ui.confirm({timeout: 90s})`。
