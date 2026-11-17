@@ -299,6 +299,33 @@ bridge 上传也用 device 凭据 POST /api/blob（归属到 device 自己的 pa
 所以"用户传了什么图"在事件流里拿不到回显，只能靠 bridge 自己记（后续用
 `pcp_send` 工具让 agent 主动回传文件/截图，才是 agent→手机的正解）。
 
+**`pcp_send`：agent 主动把文件发给手机的约定**
+
+blob 管道是双向通用的，但 agent 产出要发给手机需要一个**显式约定**——
+否则手机上只能靠碰运气在文本里等一个链接。做法是注册一个 pi 自定义工具：
+
+```
+扩展（pi 子进程内）        bridge（有 pairId + uploader）
+─────────────────────      ──────────────────────────────
+校验路径安全                拦截 tool_execution_end
+（workspace 内/临时目录      读文件 → 上传 blob →
+ ≤16MB/普通文件）           推 pcp_artifact 帧
+返回 details.pcpSend        记 sidecar
+```
+
+扩展**只当闸门**：它不知道当前任务属于哪个 pair、没有上传器，
+这些都在 bridge 手里。真正的 I/O 全在 bridge 侧。
+
+三个实测结论（都踩过）：
+
+1. **自定义工具的 `details` 不进 pi 的 JSONL**——"发过什么"必须另记 sidecar
+   （`~/.pi/bridge/artifacts/<taskId>.jsonl`），历史回放时合并。
+2. **pi 把 RPC 传入的图片从 user 消息剥掉**（回传与磁盘都只剩 text）——
+   所以"手机传图"无法从事件流回显，只能靠 composer 的附件 chip 反馈。
+3. **`pcp_send` 在审批策略里放行**：手机是 L1 信任锚（只有主人能配对），
+   且它不增加新的读权限（agent 本就能 read 这些文件）。每次发文件都弹
+   审批只会让用户困惑"我都让它发了还点一次"。
+
 保留期 7 天（与 SPEC §6 一致），GC 待做。
 
 ## 8. 里程碑与验收标准

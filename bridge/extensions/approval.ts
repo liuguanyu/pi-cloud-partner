@@ -21,6 +21,15 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const WRITE_TOOLS = new Set(["write", "edit", "multi_edit", "apply_patch", "patch"]);
 
+// pcp_send：agent 把文件「发回给手机」。两种策略下都放行，理由：
+//   1. 手机是本产品的信任锚（L1，只有主人能配对），发文件给手机 ≈ 交给主人，
+//      不等于外泄到外部
+//   2. 它不增加任何新的读权限 —— agent 本来就能 read 这些文件，pcp_send 只是
+//      把「已能读」的东西传出去
+//   3. 若每次都弹审批，用户会困惑「我都让它发了还让我点一次」
+// 真正的副作用（上传）由 bridge 侧完成，扩展本身只读文件 + 返回标记。
+const SEND_TOOLS = new Set(["pcp_send"]);
+
 /** 只读命令白名单（按首词判定） */
 const READ_ONLY_CMDS = new Set([
   "ls", "cat", "head", "tail", "wc", "pwd", "echo", "printf", "which", "whereis",
@@ -64,6 +73,9 @@ export default function approvalExtension(pi: any): void {
 
     // 1) 只读工具：直接放行
     if (READ_ONLY_TOOLS.has(toolName)) return;
+
+    // 1.5) 发送工具：放行（见 SEND_TOOLS 注释）
+    if (SEND_TOOLS.has(toolName)) return;
 
     // 2) 工作目录内的写文件：balanced 下放行
     if (WRITE_TOOLS.has(toolName)) {

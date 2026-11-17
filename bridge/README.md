@@ -55,8 +55,8 @@ extensions/approval.ts pi 工具审批闸门（tool_call 钩子 + ctx.ui.confirm
 
 ## 附件
 
-手机上传的截图/文件走云端 blob，事件流里只传 `blobId`。bridge 收到 `task.start.blobs`
-后按类型分流：
+**手机 → agent**：上传的截图/文件走云端 blob，事件流里只传 `blobId`。
+bridge 收到 `task.start.blobs` 后按类型分流：
 
 | 类型 | 处理 |
 |---|---|
@@ -64,6 +64,15 @@ extensions/approval.ts pi 工具审批闸门（tool_call 钩子 + ctx.ui.confirm
 | 其它（日志/压缩包/svg/pdf） | 落盘到 `<workspace>/.pcp-uploads/`，prompt 末尾附上路径 |
 
 文件不内联进 prompt 是因为 pi 的 prompt 只接受文本与图片，二进制会被截断。
+
+**agent → 手机**（`pcp_send` 工具）：agent 调用 `pcp_send(path, note)` 把文件
+发给手机。扩展只校验路径安全（workspace 内或系统临时目录，≤16MB）并返回
+`details.pcpSend`；bridge 拦截 `tool_execution_end`，读文件、上传 blob、推
+`pcp_artifact` 帧，并记 sidecar（`~/.pi/bridge/artifacts/<taskId>.jsonl`）——
+因为 pi 的 JSONL 不存自定义工具的 details，刷新后的历史回放只能靠它。
+
+内联图片（模型偶尔在回复里直接吐 base64）>512KB 时同样转 blob，
+避免撑爆 wss 帧；`image-transform.ts` 是 live 流与历史回放共用的改写规则。
 
 ## 审批策略（`approvalPolicy`）
 
