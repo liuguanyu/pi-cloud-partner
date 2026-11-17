@@ -35,6 +35,7 @@ const pending = ref<PendingClaim | null>(null);
 const active = ref<PendingClaim | null>(null);
 const error = ref("");
 const busy = ref(false);
+const copied = ref(false);
 const now = ref(Date.now());
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -92,9 +93,9 @@ async function startPairing(): Promise<void> {
   }
 }
 
-function schedulePoll(): void {
+function schedulePoll(delayMs = 1500): void {
   if (pollTimer) clearTimeout(pollTimer);
-  pollTimer = setTimeout(() => void poll(), 1500);
+  pollTimer = setTimeout(() => void poll(), delayMs);
 }
 
 async function poll(): Promise<void> {
@@ -104,18 +105,34 @@ async function poll(): Promise<void> {
     );
     pending.value = result.pending;
     active.value = result.active;
-    if (result.active) {
-      code.value = "";
-      claimUrl.value = "";
-      expiresAt.value = 0;
+
+    // 只在**码自己过期**时清掉它。
+    // 不能因为"服务器上还有一个旧的 active pair"就清——
+    // 换设备时那个 active 会一直存在，直到新的一次批准把它顶替掉。
+    if (code.value && Date.now() > expiresAt.value + 3000) {
+      clearCode();
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
-  // 码过期且没人认领就停轮询
-  if (!active.value && (code.value === "" || Date.now() < expiresAt.value + 5000)) {
-    schedulePoll();
+  // 正在配对（有码或有待批）就快轮询，否则慢轮询
+  schedulePoll(code.value !== "" || pending.value ? 1500 : 5000);
+}
+
+async function copyLink(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(claimUrl.value);
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 1500);
+  } catch {
+    error.value = "复制失败，请手动选中链接";
   }
+}
+
+function clearCode(): void {
+  code.value = "";
+  claimUrl.value = "";
+  expiresAt.value = 0;
 }
 
 async function decide(decision: "approve" | "reject"): Promise<void> {
@@ -128,6 +145,7 @@ async function decide(decision: "approve" | "reject"): Promise<void> {
       body: JSON.stringify({ pairId: pending.value.pairId, decision, takeover: true }),
     });
     pending.value = null;
+    if (decision === "approve") clearCode();
     await poll();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -168,16 +186,7 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <section v-if="active" class="card ok">
-      <h2>已配对</h2>
-      <p class="muted">
-        {{ active.user?.displayName || "某个用户" }} 正在控制这台机器。
-      </p>
-      <p class="muted small">手机上打开 {{ status.server }} 即可下发任务。</p>
-      <button :disabled="busy" @click="startPairing">换一台手机配对</button>
-    </section>
-
-    <section v-else-if="pending" class="card attention">
+    <section v-if="pending" class="card attention">
       <h2>有手机请求接管</h2>
       <p>有一台设备请求控制这台机器。</p>
       <p v-if="pending.claimIp" class="muted small">来源 IP：<span class="mono">{{ pending.claimIp }}</span></p>
@@ -194,10 +203,25 @@ onUnmounted(() => {
       <div class="qr" v-html="qr" />
       <p class="code mono">{{ code }}</p>
       <p class="muted small">
-        手机相机扫码，或手动打开 {{ status.server }} 输入上面的码。
-        <br />剩余 {{ remaining }} 秒。
+        用手机相机或<b>微信「扫一扫」</b>都可以。剩余 {{ remaining }} 秒。
       </p>
-      <p class="muted small">手机上还需要登录令牌（由 <code>pcpd user create</code> 生成）。</p>
+      <div class="linkrow">
+        <input class="mono" readonly :value="claimUrl" @focus="(e) => (e.target as HTMLInputElement).select()" />
+        <button @click="copyLink">{{ copied ? "已复制" : "复制" }}</button>
+      </div>
+      <p class="muted small">
+        微信里没有地址栏，下次进入需要重新扫码；想省事可以用 Safari 打开一次后「添加到主屏幕」。
+      </p>
+
+    </section>
+
+    <section v-else-if="active" class="card ok">
+      <h2>已配对</h2>
+      <p class="muted">
+        一台手机正在控制这台机器<template v-if="active.claimIp">（来源 IP {{ active.claimIp }}）</template>。
+      </p>
+      <p class="muted small">手机上打开 {{ status.server }} 即可下发任务。</p>
+      <button :disabled="busy" @click="startPairing">换一台手机配对</button>
     </section>
 
     <section v-else class="card">
@@ -248,6 +272,9 @@ p { margin: 0 0 10px; font-size: 13px; }
 .wide { width: 100%; margin-top: 6px; }
 
 .hint { font-size: 11px; text-align: center; margin-top: 10px; }
+.linkrow { display: flex; gap: 8px; margin: 10px 0; }
+.linkrow input { flex: 1; font-size: 12px; padding: 8px 10px; }
+.linkrow button { flex: 0 0 auto; padding: 8px 14px; font-size: 13px; }
 .error { color: var(--err); font-size: 13px; margin-top: 14px; }
 code { background: var(--bg-raise); padding: 1px 5px; border-radius: 4px; }
 </style>
