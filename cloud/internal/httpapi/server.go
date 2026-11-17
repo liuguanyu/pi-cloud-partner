@@ -43,6 +43,10 @@ type Config struct {
 	Now     func() int64
 	// AllowedOrigins 为空表示不限制（本地开发）；生产应填 https://lab.leon82.com
 	AllowedOrigins []string
+	// BlobDir 是二进制落盘目录；为空表示禁用 blob 功能
+	BlobDir string
+	// BlobSecret 用于给 blob 链接签名（浏览器 <img> 带不了 Authorization）
+	BlobSecret string
 }
 
 type Server struct {
@@ -52,6 +56,9 @@ type Server struct {
 	// bootID 每次进程启动随机生成。seq 是进程内计数，重启会归零，
 	// 客户端据此判断「本地游标是否已经过期」。
 	bootID string
+	// blobDir / blobSecret 供 blob 上传与签名链接使用
+	blobDir    string
+	blobSecret string
 }
 
 func New(cfg Config) *Server {
@@ -66,10 +73,12 @@ func New(cfg Config) *Server {
 		panic("cloud: entropy source unavailable: " + err.Error())
 	}
 	s := &Server{
-		cfg:     cfg,
-		mux:     http.NewServeMux(),
-		limiter: newRateLimiter(10, time.Minute),
-		bootID:  hex.EncodeToString(boot),
+		cfg:        cfg,
+		mux:        http.NewServeMux(),
+		limiter:    newRateLimiter(10, time.Minute),
+		bootID:     hex.EncodeToString(boot),
+		blobDir:    cfg.BlobDir,
+		blobSecret: cfg.BlobSecret,
 	}
 	s.routes()
 	return s
@@ -106,6 +115,11 @@ func (s *Server) routes() {
 	// 事件流 / 长连接
 	s.mux.HandleFunc("GET /sse", s.handleSSE)
 	s.mux.HandleFunc("GET /ws/bridge", s.handleBridgeWS)
+
+	// blob：上传走 multipart，下载支持签名 URL（给 <img>）与凭据（给 bridge）
+	s.mux.HandleFunc("POST /api/blob", s.handleBlobUpload)
+	s.mux.HandleFunc("GET /api/blob/{id}/url", s.handleBlobURL)
+	s.mux.HandleFunc("GET /blob/{id}", s.handleBlobGet)
 }
 
 // ── 中间件 ─────────────────────────────────────────────────────

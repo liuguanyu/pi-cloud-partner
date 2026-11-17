@@ -359,7 +359,25 @@ export class AppController {
 
   // ── 任务操作 ────────────────────────────────────────────────
 
-  async startTask(input: { prompt: string; workspace: string; isolation?: "shared" | "worktree" }): Promise<string> {
+  /** 上传附件，返回可放进 task.start 的引用。 */
+  async upload(file: File): Promise<{ blobId: string; kind?: string; name?: string; mimeType?: string }> {
+    const { pairToken, pairId } = this.#creds.load();
+    if (!pairToken || !pairId) throw new Error("尚未就绪");
+    const result = await this.#api.uploadBlob(pairToken, pairId, file);
+    return {
+      blobId: result.blobId,
+      kind: result.kind,
+      name: result.name,
+      mimeType: result.mimeType,
+    };
+  }
+
+  async startTask(input: {
+    prompt: string;
+    workspace: string;
+    isolation?: "shared" | "worktree";
+    blobs?: Array<{ blobId: string; kind?: string; name?: string; mimeType?: string }>;
+  }): Promise<string> {
     const { pairToken, pairId } = this.#creds.load();
     if (!pairToken || !pairId) throw new Error("尚未就绪");
     const result = await this.#api.startTask(pairToken, pairId, input);

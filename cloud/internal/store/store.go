@@ -65,6 +65,11 @@ type Store interface {
 	AppendAudit(ctx context.Context, e model.AuditEvent) error
 	ListAudit(ctx context.Context, pairID model.ID, limit int) ([]model.AuditEvent, error)
 
+	// ── blob 元数据（二进制不进库） ────────────────────────
+	CreateBlob(ctx context.Context, b model.Blob) error
+	BlobByID(ctx context.Context, id model.ID) (model.Blob, error)
+	BlobBySHA(ctx context.Context, sha256 string) (model.Blob, error)
+
 	// ── 任务摘要（不含正文） ───────────────────────────────
 	// UpsertTask 是**部分更新**：零值字段不覆盖已存在的值。
 	// 云端在不同事件里只知道一部分信息（enqueued 有 workspace，settled 有 exitReason），

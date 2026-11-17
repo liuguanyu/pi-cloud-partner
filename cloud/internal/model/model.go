@@ -170,6 +170,21 @@ type AuditEvent struct {
 	Meta     string // JSON
 }
 
+// Blob 是上传/产物的二进制元数据；实际字节落磁盘（storage_key）。
+type Blob struct {
+	ID         ID
+	TaskID     *ID
+	PairID     ID
+	Kind       string // image | file
+	Mime       string
+	Name       string
+	Bytes      int64
+	SHA256     string
+	StorageKey string
+	CreatedAt  int64
+	ExpiresAt  int64
+}
+
 // Task 是云端只保存的「摘要」，不含任何会话正文。
 type Task struct {
 	ID            ID

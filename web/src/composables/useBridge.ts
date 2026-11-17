@@ -12,7 +12,13 @@ export interface BridgeApi {
   state: Ref<AppState>;
   actions: {
     claim(code: string, deviceName: string): Promise<void>;
-    startTask(input: { prompt: string; workspace: string; isolation?: "shared" | "worktree" }): Promise<string>;
+    upload(file: File): Promise<{ blobId: string; kind?: string; name?: string; mimeType?: string }>;
+    startTask(input: {
+      prompt: string;
+      workspace: string;
+      isolation?: "shared" | "worktree";
+      blobs?: Array<{ blobId: string; kind?: string; name?: string; mimeType?: string }>;
+    }): Promise<string>;
     steerTask(taskId: string, text: string, mode?: "steer" | "follow_up"): Promise<void>;
     cancelTask(taskId: string): Promise<void>;
     focusTask(taskId: string | null): Promise<void>;
@@ -54,6 +60,7 @@ export function useBridge(): BridgeApi {
     state,
     actions: {
       claim: (code, deviceName) => app.claim(code, deviceName),
+      upload: (file) => app.upload(file),
       startTask: (input) => app.startTask(input),
       steerTask: (taskId, text, mode) => app.steerTask(taskId, text, mode),
       cancelTask: (taskId) => app.cancelTask(taskId),

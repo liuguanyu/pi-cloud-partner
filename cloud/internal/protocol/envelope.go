@@ -137,7 +137,10 @@ func (e Envelope) Decode(v any) error {
 func RefPair(id model.ID) string { return "p_" + id.String() }
 func RefTask(id model.ID) string { return "t_" + id.String() }
 
-// ParseRef 解析 p_/t_ 前缀的标识，返回 16 字节 ID。
+// RefBlob 生成 blob 标识。
+func RefBlob(id model.ID) string { return "b_" + id.String() }
+
+// ParseRef 解析 p_/t_/b_ 前缀的标识，返回 16 字节 ID。
 func ParseRef(s, prefix string) (model.ID, error) {
 	var zero model.ID
 	want := prefix + "_"

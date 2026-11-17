@@ -30,9 +30,17 @@ const props = defineProps<{
   error?: string;
 }>();
 
+interface BlobRef {
+  blobId: string;
+  kind?: string;
+  name?: string;
+  mimeType?: string;
+}
+
 const emit = defineEmits<{
-  create: [input: { prompt: string; workspace: string; isolation: "shared" | "worktree" }];
+  create: [input: { prompt: string; workspace: string; isolation: "shared" | "worktree"; blobs: BlobRef[] }];
   open: [taskId: string];
+  upload: [files: FileList];
 }>();
 
 const prompt = ref("");
@@ -40,6 +48,11 @@ const workspace = ref(props.workspaces[0] ?? "");
 const isolation = ref<"shared" | "worktree">("shared");
 const showComposer = ref(false);
 const manualMode = ref(false);
+/** 已上传成功的附件 */
+const attachments = ref<Array<BlobRef & { name?: string }>>([]);
+const uploading = ref(false);
+const uploadError = ref("");
+const fileInput = ref<HTMLInputElement | null>(null);
 
 /** 根目录在前，git 仓库次之，其余按名字（后端已排好序，这里只做缩进展示） */
 const selectableDirs = computed<DirEntry[]>(() => {
@@ -75,8 +88,39 @@ watch(
 );
 
 const canCreate = computed(
-  () => props.primed && props.bridgeOnline && prompt.value.trim().length > 0 && workspace.value.length > 0,
+  () =>
+    props.primed &&
+    props.bridgeOnline &&
+    prompt.value.trim().length > 0 &&
+    workspace.value.length > 0 &&
+    !uploading.value,
 );
+
+function pickFiles(): void {
+  fileInput.value?.click();
+}
+
+function onFilesPicked(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const files = input.files;
+  if (!files || files.length === 0) return;
+  uploadError.value = "";
+  uploading.value = true;
+  emit("upload", files);
+  // 清空 input，否则选同一个文件不会再次触发 change
+  input.value = "";
+}
+
+/** App 在收到上传完成回调后调用（见 App.vue 的 handleUpload） */
+function addAttachment(blob: BlobRef): void {
+  attachments.value = [...attachments.value, blob];
+}
+
+function removeAttachment(blobId: string): void {
+  attachments.value = attachments.value.filter((item) => item.blobId !== blobId);
+}
+
+defineExpose({ addAttachment, setUploading: (v: boolean) => (uploading.value = v), setUploadError: (msg: string) => (uploadError.value = msg) });
 
 const capacityText = computed(() => {
   const cap = props.capacity;
@@ -87,8 +131,14 @@ const capacityText = computed(() => {
 
 function submit(): void {
   if (!canCreate.value) return;
-  emit("create", { prompt: prompt.value.trim(), workspace: workspace.value, isolation: isolation.value });
+  emit("create", {
+    prompt: prompt.value.trim(),
+    workspace: workspace.value,
+    isolation: isolation.value,
+    blobs: attachments.value.map(({ blobId, kind, name, mimeType }) => ({ blobId, kind, name, mimeType })),
+  });
   prompt.value = "";
+  attachments.value = [];
   showComposer.value = false;
 }
 
@@ -172,10 +222,21 @@ function statusLabel(status: string): string {
         <span>worktree 隔离（同一仓库并行跑时用）</span>
       </label>
       <textarea v-model="prompt" rows="3" placeholder="要它做什么？例：修一下登录接口的 500" />
+
+      <div v-if="attachments.length > 0 || uploading" class="attach-list">
+        <span v-for="item in attachments" :key="item.blobId" class="chip">
+          {{ item.kind === "image" ? "🖼" : "📄" }} {{ item.name || item.blobId.slice(0, 8) }}
+          <button class="chip-x" @click="removeAttachment(item.blobId)">×</button>
+        </span>
+        <span v-if="uploading" class="chip muted">上传中…</span>
+      </div>
+      <p v-if="uploadError" class="error small">{{ uploadError }}</p>
       <div class="actions">
-        <button :disabled="props.busy" @click="showComposer = false">取消</button>
+        <button :disabled="props.busy || uploading" @click="showComposer = false">取消</button>
+        <button :disabled="uploading" @click="pickFiles">📎 附件</button>
         <button class="primary" :disabled="!canCreate || props.busy" @click="submit">新任务</button>
       </div>
+      <input ref="fileInput" type="file" multiple hidden @change="onFilesPicked" />
       <p v-if="props.error" class="error">{{ props.error }}</p>
     </div>
 
@@ -258,5 +319,24 @@ function statusLabel(status: string): string {
 .check input { width: auto; }
 .actions { display: flex; gap: 10px; }
 .actions button { flex: 1; }
+.actions button:nth-child(2) { flex: 0 0 auto; }
+
+.attach-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip-x { background: none; border: none; padding: 0 0 0 2px; color: var(--fg-dim); cursor: pointer; }
+.error.small { font-size: 12px; }
 .error { color: var(--err); font-size: 12px; }
 </style>

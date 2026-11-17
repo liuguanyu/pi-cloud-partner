@@ -53,6 +53,18 @@ extensions/approval.ts pi 工具审批闸门（tool_call 钩子 + ctx.ui.confirm
 **3. run 进行中的上下文替换命令排队**
 `/resume` `/new` `/fork` `/clone` `/compact` 在 run 未结束时进队列，`agent_settled` 后自动执行，并提示"将在当前任务结束后执行"。
 
+## 附件
+
+手机上传的截图/文件走云端 blob，事件流里只传 `blobId`。bridge 收到 `task.start.blobs`
+后按类型分流：
+
+| 类型 | 处理 |
+|---|---|
+| 图片（png/jpg/gif/webp/bmp） | 转成 `ImageContent`（base64 + mime）直接喂模型 |
+| 其它（日志/压缩包/svg/pdf） | 落盘到 `<workspace>/.pcp-uploads/`，prompt 末尾附上路径 |
+
+文件不内联进 prompt 是因为 pi 的 prompt 只接受文本与图片，二进制会被截断。
+
 ## 审批策略（`approvalPolicy`）
 
 手机上被审批弹窗淹没是早期实现的问题：判定写成"含 `&&` 就不放行"，

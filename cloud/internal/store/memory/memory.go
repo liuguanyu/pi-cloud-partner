@@ -24,6 +24,8 @@ type Store struct {
 	pairs   map[model.ID]model.Pair
 	audits  []model.AuditEvent
 	tasks   map[model.ID]model.Task
+	blobs   map[model.ID]model.Blob
+	blobSHA map[string]model.ID
 }
 
 func New() *Store {
@@ -36,6 +38,8 @@ func New() *Store {
 		codes:   map[string]model.PairCode{},
 		pairs:   map[model.ID]model.Pair{},
 		tasks:   map[model.ID]model.Task{},
+		blobs:   map[model.ID]model.Blob{},
+		blobSHA: map[string]model.ID{},
 	}
 }
 
@@ -431,6 +435,37 @@ func (s *Store) TasksByPair(_ context.Context, pairID model.ID, limit int) ([]mo
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (s *Store) CreateBlob(_ context.Context, b model.Blob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, dup := s.blobSHA[b.SHA256]; dup {
+		return store.ErrConflict
+	}
+	s.blobs[b.ID] = b
+	s.blobSHA[b.SHA256] = b.ID
+	return nil
+}
+
+func (s *Store) BlobByID(_ context.Context, id model.ID) (model.Blob, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	b, ok := s.blobs[id]
+	if !ok {
+		return model.Blob{}, store.ErrNotFound
+	}
+	return b, nil
+}
+
+func (s *Store) BlobBySHA(_ context.Context, sha string) (model.Blob, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id, ok := s.blobSHA[sha]
+	if !ok {
+		return model.Blob{}, store.ErrNotFound
+	}
+	return s.blobs[id], nil
 }
 
 func (s *Store) Close() error { return nil }

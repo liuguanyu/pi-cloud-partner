@@ -263,6 +263,29 @@ pi 不提供 attach、也没有 session 锁，所以只能靠可观测信号避�
 
 `pi.event` 的 `payload` **原样等于 pi 的 `JsonAgentSessionEvent`**，零翻译透传——pi 升级事件协议时白拿新字段。
 
+## 7.2 附件与产物（blob）
+
+二进制**永不进事件流**（会撑爆 wss 帧、撑爆内存）。统一走 blob：
+
+```
+手机 → 云端   POST /api/blob (multipart, ≤16MB) → { blobId }
+             内容按 sha256 去重，落 /var/lib/pcp/blobs/<uuid>，元数据进 blobs 表
+task.start   payload.blobs = [{ blobId, kind, name, mimeType }]
+bridge       GET /blob/<id>（device 凭据）→ 图片转 ImageContent；
+             其它落盘到 <workspace>/.pcp-uploads/，并在 prompt 末尾附上路径
+手机预览     GET /api/blob/<id>/url → 签名 URL → <img src> 直接可用
+             （签名 URL 是必须的：<img> 带不了 Authorization）
+```
+
+两个坑：
+
+1. **mime 要兜底**：浏览器有时只给 `application/octet-stream`，按扩展名补判，
+   否则手机端 `<img>` 会变成下载。
+2. **文件不内联进 prompt**：pi 的 prompt 只接受文本与图片；二进制塞进去会被截断。
+   落盘 + 给路径，让 agent 用自己的 read/grep 处理，才是可靠的。
+
+保留期 7 天（与 SPEC §6 一致），GC 待做。
+
 ## 8. 里程碑与验收标准
 
 | 里程碑 | 内容 | 验收（可测） |

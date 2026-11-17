@@ -22,6 +22,8 @@ import { Down, Up, envelope, type Envelope } from "./cloud/protocol.ts";
 import { Runner, type TaskRequest } from "./cloud/runner.ts";
 import { startConsole, type ConsoleHandle } from "./local/console.ts";
 import { scanWorkspaces, type DirEntry } from "./cloud/dirtree.ts";
+import { materializeBlobs, type BlobRef } from "./cloud/attachments.ts";
+import { httpBase } from "./local/console.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APPROVAL_EXTENSION = resolve(HERE, "..", "extensions", "approval.ts");
@@ -38,6 +40,8 @@ async function main(): Promise<void> {
 
   const cfg = loadConfig();
   const creds = loadCredentials();
+  // 云端 HTTP 基址：附件下载、配对等本地控制台接口都基于它
+  const base = httpBase(cfg.serverUrl);
 
   log("配置就绪", {
     server: cfg.serverUrl,
@@ -126,18 +130,48 @@ async function main(): Promise<void> {
           workspace?: string;
           isolation?: string;
           images?: unknown[];
+          blobs?: BlobRef[];
         };
         if (!env.taskId || !payload.prompt || !payload.workspace) {
           log("task.start 缺字段，忽略", { taskId: env.taskId });
           return;
         }
+
+        // 附件：图片变成 prompt 的 image 内容，其它落地到工作区
+        let prompt = payload.prompt;
+        let images = payload.images;
+        if (payload.blobs?.length) {
+          try {
+            const materialized = await materializeBlobs(payload.blobs, {
+              baseUrl: base,
+              deviceToken: creds.deviceToken,
+              workspace: payload.workspace,
+              log,
+            });
+            if (materialized.images.length > 0) {
+              images = [...(images ?? []), ...materialized.images];
+            }
+            if (materialized.notes.length > 0) {
+              prompt += materialized.notes.join("\n");
+            }
+            log("附件已落地", {
+              taskId: env.taskId,
+              images: materialized.images.length,
+              files: materialized.notes.length > 0 ? payload.blobs.length - materialized.images.length : 0,
+            });
+          } catch (error) {
+            log("附件处理失败，继续执行", { taskId: env.taskId, error: String(error) });
+            prompt += "\n\n（有附件未能读取）";
+          }
+        }
+
         const req: TaskRequest = {
           taskId: env.taskId,
           pairId: env.pairId ?? "",
           workspace: payload.workspace,
-          prompt: payload.prompt,
+          prompt,
           isolation: payload.isolation ?? "shared",
-          images: payload.images,
+          images,
         };
         const result = runner.submit(req);
         log("收到任务", { taskId: env.taskId, workspace: payload.workspace, accepted: result.accepted, reason: result.reason });

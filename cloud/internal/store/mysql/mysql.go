@@ -685,3 +685,48 @@ func (s *Store) TasksByPair(ctx context.Context, pairID model.ID, limit int) ([]
 	}
 	return out, wrap(rows.Err())
 }
+
+// ── blob 元数据 ──────────────────────────────────────────────
+
+func (s *Store) CreateBlob(ctx context.Context, b model.Blob) error {
+	var taskID any
+	if b.TaskID != nil {
+		taskID = b.TaskID[:]
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO blobs (id, task_id, pair_id, kind, mime, name, bytes, sha256, storage_key, created_at, expires_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		b.ID[:], taskID, b.PairID[:], b.Kind, b.Mime, b.Name, b.Bytes, b.SHA256, b.StorageKey, b.CreatedAt, b.ExpiresAt)
+	return wrap(err)
+}
+
+func (s *Store) scanBlob(row interface{ Scan(...any) error }) (model.Blob, error) {
+	var (
+		b       model.Blob
+		rawID   []byte
+		rawTask []byte
+		rawPair []byte
+	)
+	err := row.Scan(&rawID, &rawTask, &rawPair, &b.Kind, &b.Mime, &b.Name, &b.Bytes, &b.SHA256, &b.StorageKey, &b.CreatedAt, &b.ExpiresAt)
+	if err != nil {
+		return model.Blob{}, wrap(err)
+	}
+	copy(b.ID[:], rawID)
+	copy(b.PairID[:], rawPair)
+	if len(rawTask) == 16 {
+		id := model.ID{}
+		copy(id[:], rawTask)
+		b.TaskID = &id
+	}
+	return b, nil
+}
+
+const blobColumns = `id, task_id, pair_id, kind, mime, name, bytes, sha256, storage_key, created_at, expires_at`
+
+func (s *Store) BlobByID(ctx context.Context, id model.ID) (model.Blob, error) {
+	return s.scanBlob(s.db.QueryRowContext(ctx, `SELECT `+blobColumns+` FROM blobs WHERE id = ?`, id[:]))
+}
+
+func (s *Store) BlobBySHA(ctx context.Context, sha string) (model.Blob, error) {
+	return s.scanBlob(s.db.QueryRowContext(ctx, `SELECT `+blobColumns+` FROM blobs WHERE sha256 = ?`, sha))
+}

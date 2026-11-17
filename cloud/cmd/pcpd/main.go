@@ -13,6 +13,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -96,6 +98,8 @@ type serveOpts struct {
 	origins      string
 	devBootstrap bool
 	codeTTL      time.Duration
+	blobDir      string
+	blobSecret   string
 }
 
 func parseServeFlags(args []string) serveOpts {
@@ -106,6 +110,8 @@ func parseServeFlags(args []string) serveOpts {
 	fs.StringVar(&o.dsn, "dsn", os.Getenv("PCP_MYSQL_DSN"), "MySQL DSN")
 	fs.StringVar(&o.origins, "origins", "", "允许的 CORS 源，逗号分隔")
 	fs.BoolVar(&o.devBootstrap, "dev-bootstrap", false, "memory 模式下的演示凭据")
+	fs.StringVar(&o.blobDir, "blob-dir", os.Getenv("PCP_BLOB_DIR"), "二进制存储目录（空=禁用）")
+	fs.StringVar(&o.blobSecret, "blob-secret", os.Getenv("PCP_BLOB_SECRET"), "blob 链接签名密钥")
 	fs.DurationVar(&o.codeTTL, "code-ttl", 120*time.Second, "配对码有效期")
 	_ = fs.Parse(args)
 	return o
@@ -187,6 +193,25 @@ func runServe(args []string) error {
 		}
 	})
 
+	// blob 签名密钥：没配置就随机生成一个，仅影响链接有效期（重启后旧链接失效）
+	blobSecret := o.blobSecret
+	if blobSecret == "" {
+		buf := make([]byte, 32)
+		if _, err := rand.Read(buf); err != nil {
+			return err
+		}
+		blobSecret = hex.EncodeToString(buf)
+		logger.Warn("未配置 PCP_BLOB_SECRET，已生成临时密钥（重启后旧的 blob 链接会失效）")
+	}
+	if o.blobDir != "" {
+		if err := os.MkdirAll(o.blobDir, 0o700); err != nil {
+			return fmt.Errorf("创建 blob 目录失败: %w", err)
+		}
+		logger.Info("blob 存储已启用", "dir", o.blobDir)
+	} else {
+		logger.Warn("未配置 PCP_BLOB_DIR，手机上传与产物下载将不可用")
+	}
+
 	var origins []string
 	if o.origins != "" {
 		for _, part := range strings.Split(o.origins, ",") {
@@ -218,6 +243,8 @@ func runServe(args []string) error {
 		Hub:            h,
 		Log:            logger,
 		AllowedOrigins: origins,
+		BlobDir:        o.blobDir,
+		BlobSecret:     blobSecret,
 	})
 
 	httpServer := &http.Server{

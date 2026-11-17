@@ -67,10 +67,25 @@ export interface WorkspacesResult {
   capacity?: Capacity;
 }
 
+export interface BlobRef {
+  blobId: string;
+  kind?: string;
+  name?: string;
+  mimeType?: string;
+}
+
+export interface UploadResult extends BlobRef {
+  bytes: number;
+  url?: string;
+  deduplicated?: boolean;
+}
+
 export interface TaskStartInput {
   prompt: string;
   workspace: string;
   isolation?: "shared" | "worktree";
+  /** 手机上传的附件：图片会直接喂给模型，其它落地到工作区 */
+  blobs?: BlobRef[];
 }
 
 export interface TaskStartResult {
@@ -116,6 +131,35 @@ export class ApiClient {
   }
 
   // ── 任务 ──────────────────────────────────────────────────
+
+  /** 上传附件（multipart）。大对象走这里，不进事件流。 */
+  async uploadBlob(pairToken: string, pairId: string, file: File): Promise<UploadResult> {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const response = await fetch(`${this.#base}/api/blob?pairId=${encodeURIComponent(pairId)}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${pairToken}` },
+      body: form,
+    });
+    const text = await response.text();
+    const payload = text ? (JSON.parse(text) as unknown) : undefined;
+    if (!response.ok) {
+      const err = payload as { error?: string; message?: string } | undefined;
+      throw new ApiError(response.status, err?.error ?? `http_${response.status}`, err?.message ?? "上传失败");
+    }
+    return payload as UploadResult;
+  }
+
+  /** 换取可直接放进 <img src> 的签名链接（浏览器 <img> 带不了 Authorization）。 */
+  async blobUrl(pairToken: string, pairId: string, blobId: string): Promise<{ url: string }> {
+    const short = blobId.replace(/^b_/, "");
+    return this.#json(
+      "GET",
+      `/api/blob/${encodeURIComponent(short)}/url?pairId=${encodeURIComponent(pairId)}`,
+      { kind: "bearer", token: pairToken },
+      undefined,
+    );
+  }
 
   workspaces(pairToken: string, pairId: string): Promise<WorkspacesResult> {
     return this.#json("GET", `/api/workspaces?pairId=${encodeURIComponent(pairId)}`, { kind: "bearer", token: pairToken }, undefined);

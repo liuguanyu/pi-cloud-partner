@@ -27,6 +27,8 @@ const deviceMode = ref(isLoopback && (location.hash === "#/device" || location.p
 const { state, actions } = useBridge();
 
 const route = ref<string>(location.hash || "#/");
+/** 任务列表组件的引用：上传结果需要回填到它的附件列表 */
+const taskListRef = ref<InstanceType<typeof TaskListView> | null>(null);
 
 /**
  * 扫码链接形如 https://host/m?code=ABC123。
@@ -115,7 +117,28 @@ function confirmUnpair(): void {
   if (ok) void run(() => actions.revokePair());
 }
 
-async function handleCreate(input: { prompt: string; workspace: string; isolation: "shared" | "worktree" }): Promise<void> {
+async function handleUpload(files: FileList): Promise<void> {
+  const list = taskListRef.value;
+  if (!list) return;
+  list.setUploading(true);
+  try {
+    for (const file of Array.from(files)) {
+      const blob = await actions.upload(file);
+      list.addAttachment(blob);
+    }
+  } catch (error) {
+    list.setUploadError(error instanceof Error ? error.message : String(error));
+  } finally {
+    list.setUploading(false);
+  }
+}
+
+async function handleCreate(input: {
+  prompt: string;
+  workspace: string;
+  isolation: "shared" | "worktree";
+  blobs: Array<{ blobId: string; kind?: string; name?: string; mimeType?: string }>;
+}): Promise<void> {
   await run(async () => {
     const taskId = await actions.startTask(input);
     go(`#/t/${encodeURIComponent(taskId)}`);
@@ -188,7 +211,9 @@ async function handleAnswer(
         :primed="state.primed"
         :busy="busy"
         :error="actionError"
+        ref="taskListRef"
         @create="handleCreate"
+        @upload="handleUpload"
         @open="(taskId) => go(`#/t/${encodeURIComponent(taskId)}`)"
       />
     </template>
