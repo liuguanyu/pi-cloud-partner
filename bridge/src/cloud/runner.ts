@@ -109,6 +109,8 @@ export class Runner {
   #running = new Map<string, RunningTask>();
   #children = new Map<string, Child>();
   #childSeq = 0;
+  /** 已结束任务的会话上下文：follow_up 重建子进程时要靠 workspace + sessionId */
+  #finishedTasks = new Map<string, { sessionId: string; workspace: string; pairId: string }>();
   #focusedTaskId: string | null = null;
   /** requestId → 发起它的 child 与**请求详情**（对账时要重发给手机） */
   #uiOwner = new Map<string, { child: Child; request: UiRequest }>();
@@ -154,6 +156,70 @@ export class Runner {
       }
     })();
     return true;
+  }
+
+  /**
+   * 任务结束后继续对话（follow_up）。
+   *
+   * 任务 settle 时从 #running 摘除，但 pi 子进程通常还活着（空闲保留窗口内），
+   * 直接复用；已被回收就按 workspace + --session-id 重建 —— 上下文在磁盘
+   * session 文件里，重建的进程能完整续上（实测 messageCount 与历史一致）。
+   *
+   * 两条路径都必须建立 RunningTask 并挂到 child.task 上：事件转发
+   * （#forwardPiEvent）依赖它把 pi 事件归因到这个 taskId，否则手机收不到。
+   */
+  async followUp(taskId: string, text: string): Promise<void> {
+    const ctx = this.#finishedTasks.get(taskId);
+    if (!ctx) throw new Error("unknown_task");
+
+    let child = this.#children.get(ctx.workspace);
+    if (child) {
+      if (child.task) {
+        // 同 workspace 还有别的任务在跑：排队而不是抢
+        throw new Error("workspace_busy");
+      }
+      if (child.sessionId !== ctx.sessionId) {
+        // 该 workspace 的子进程已续到别的会话（比如它之后跑了新任务开了新 session）：
+        // 不能直接往它身上发。停掉它，按 sessionId 重建。
+        this.#children.delete(ctx.workspace);
+        await child.client.stop().catch(() => {});
+        child = undefined;
+      }
+    }
+    if (!child) {
+      child = await this.#ensureChild(ctx.workspace, ctx.sessionId);
+    }
+
+    const task: RunningTask = {
+      req: { taskId, pairId: ctx.pairId, workspace: ctx.workspace, prompt: text, isolation: "shared" },
+      workspace: ctx.workspace,
+      child,
+      epoch: 1,
+      state: "running",
+      lastLine: "",
+      lastSummaryAt: 0,
+      settled: false,
+    };
+    child.task = task;
+    child.lastUsedAt = Date.now();
+    this.#running.set(taskId, task);
+    this.#lastPairId = ctx.pairId;
+    if (!this.#focusedTaskId) this.#focusedTaskId = taskId;
+    this.#emit(task, Up.taskStarted, { ...this.#taskPayload(task), sessionId: ctx.sessionId });
+    this.#emitCapacity();
+    this.#opts.log("follow_up", { taskId, sessionId: ctx.sessionId.slice(0, 8), reused: Boolean(this.#finishedTasks.get(taskId)?.workspace === ctx.workspace) });
+
+    void (async () => {
+      try {
+        // 用 prompt 而不是 follow_up RPC：恢复/复用来的子进程处于空闲，
+        // follow_up RPC 只会把消息排队（disposition:queued）不触发 turn，
+        // prompt 才能开新 run（实测事件流完整、agent_settled 正常发）。
+        await child.client.prompt(text);
+      } catch (error) {
+        this.#opts.log("follow_up 投递失败", { taskId, error: String(error) });
+      }
+      await this.#waitSettled(task).catch(() => {});
+    })();
   }
 
   cancel(taskId: string): boolean {
@@ -506,6 +572,11 @@ export class Runner {
       const sessionId = typeof state.sessionId === "string" ? state.sessionId : "";
       if (sessionId) {
         child.sessionId = sessionId;
+        this.#finishedTasks.set(task.req.taskId, {
+          sessionId,
+          workspace: task.workspace,
+          pairId: task.req.pairId,
+        });
         this.#emit(task, Up.taskStarted, { ...this.#taskPayload(task), sessionId });
       }
       const streaming = Boolean(state.isStreaming);
@@ -566,7 +637,7 @@ export class Runner {
 
   // ── 子进程管理 ──────────────────────────────────────────────
 
-  async #ensureChild(workspace: string): Promise<Child> {
+  async #ensureChild(workspace: string, sessionId?: string): Promise<Child> {
     const existing = this.#children.get(workspace);
     if (existing) return existing;
 
@@ -576,6 +647,9 @@ export class Runner {
 
     const args: string[] = [];
     if (this.#opts.model) args.push("--model", this.#opts.model);
+    // 恢复旧会话（follow_up 重建子进程时）：--session-id 让 pi 从磁盘 session 文件
+    // 完整加载上下文（实测 messageCount 与历史一致）
+    if (sessionId) args.push("--session-id", sessionId);
     if (this.#opts.sessionDir) args.push("--session-dir", this.#opts.sessionDir);
     if (this.#opts.approvalExtension) args.push("-e", this.#opts.approvalExtension);
     if (this.#opts.pcpSendExtension) args.push("-e", this.#opts.pcpSendExtension);

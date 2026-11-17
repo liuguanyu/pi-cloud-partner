@@ -197,7 +197,7 @@ async function handleAnswer(
         :busy="busy"
         :error="actionError"
         @back="go('#/')"
-        @steer="(text) => run(() => actions.steerTask(activeTaskId!, text))"
+        @steer="(text, mode) => run(() => actions.steerTask(activeTaskId!, text, mode ?? 'steer'))"
         @cancel="run(() => actions.cancelTask(activeTaskId!))"
         @answer="handleAnswer"
       />

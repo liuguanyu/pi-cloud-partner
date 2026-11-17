@@ -195,8 +195,22 @@ async function main(): Promise<void> {
       case Down.taskInput: {
         const payload = (env.payload ?? {}) as { text?: string; mode?: "steer" | "follow_up"; taskId?: string };
         const taskId = payload.taskId ?? env.taskId ?? "";
-        const ok = runner.input(taskId, payload.text ?? "", payload.mode === "follow_up" ? "follow_up" : "steer");
-        log("任务输入", { taskId, mode: payload.mode, ok });
+        const mode = payload.mode === "follow_up" ? "follow_up" : "steer";
+        if (mode === "steer") {
+          const ok = runner.input(taskId, payload.text ?? "", "steer");
+          log("任务输入", { taskId, mode, ok });
+          return;
+        }
+        // follow_up：任务还在跑 → 插话；已结束 → 续接会话（复用/重建子进程）
+        const ok = runner.input(taskId, payload.text ?? "", "follow_up");
+        if (ok) {
+          log("任务输入", { taskId, mode, ok });
+          return;
+        }
+        runner
+          .followUp(taskId, payload.text ?? "")
+          .then(() => log("follow_up 续接", { taskId }))
+          .catch((error) => log("follow_up 失败", { taskId, error: String(error) }));
         return;
       }
 

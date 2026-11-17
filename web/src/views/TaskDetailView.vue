@@ -22,7 +22,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   back: [];
-  steer: [text: string];
+  steer: [text: string, mode?: "steer" | "follow_up"];
   cancel: [];
   answer: [approval: UiRequestPayload & { taskId: string }, decision: "approve" | "deny" | { value: unknown }];
 }>();
@@ -35,7 +35,13 @@ const atBottom = ref(true);
 const hasNewBelow = ref(false);
 
 const terminal = computed(() => (props.task ? isTerminal(props.task.status) : true));
-const canSend = computed(() => !terminal.value && draft.value.trim().length > 0);
+// 已结束（settled/failed/cancelled）的任务可以续聊（follow_up），但 interrupted
+// 不行：那是 bridge 重启造成的，磁盘会话可能停在半截，先重开任务更稳妥
+const resumable = computed(() => {
+  const st = props.task?.status;
+  return terminal.value && st !== "interrupted" && st !== "not_started";
+});
+const canSend = computed(() => (!terminal.value || resumable.value) && draft.value.trim().length > 0);
 const showJump = computed(() => !atBottom.value);
 
 const BOTTOM_THRESHOLD_PX = 80;
@@ -110,7 +116,8 @@ function emptyHint(task: TaskView): string {
 
 function send(): void {
   if (!canSend.value) return;
-  emit("steer", draft.value.trim());
+  // 还在跑 → steer（插话）；已结束 → follow_up（续接会话）
+  emit("steer", draft.value.trim(), terminal.value ? "follow_up" : "steer");
   draft.value = "";
 }
 </script>
@@ -171,8 +178,14 @@ function send(): void {
       <textarea
         v-model="draft"
         rows="1"
-        :disabled="terminal"
-        :placeholder="terminal ? '任务已结束' : '插话（steer），不新建任务'"
+        :disabled="!resumable && terminal"
+        :placeholder="
+          !terminal
+            ? '插话（steer），不新建任务'
+            : resumable
+              ? '任务已完成，继续对话（不新建任务）'
+              : '任务已结束'
+        "
         @keydown.enter.exact.prevent="send"
       />
       <button class="primary" :disabled="!canSend || props.busy" @click="send">发送</button>
