@@ -180,3 +180,34 @@ func TestSlowConsumerDoesNotBlock(t *testing.T) {
 	}
 	_ = slow
 }
+
+// 空闲回收：有人订阅不能回收；无人订阅且超时才能回收。
+func TestSweepOnlyIdleUnsubscribed(t *testing.T) {
+	h := hub.New()
+	idle := model.NewID()
+	watched := model.NewID()
+
+	h.Publish(idle, taskFrame("t_1"), protocol.Marshal)
+	h.Publish(watched, taskFrame("t_2"), protocol.Marshal)
+	_, unsubscribe := h.Subscribe(watched)
+	defer unsubscribe()
+
+	// 立刻回收：都还"新鲜"，一个都不该删
+	if n := h.Sweep(60_000, time.Now().UnixMilli()); n != 0 {
+		t.Fatalf("新鲜状态不该被回收，实际回收 %d", n)
+	}
+
+	// 一小时后：无人订阅的应被回收，有订阅的保留
+	future := time.Now().UnixMilli() + 3_600_000
+	if n := h.Sweep(60_000, future); n != 1 {
+		t.Fatalf("应回收 1 个空闲 pair，实际 %d", n)
+	}
+	bridges, pairs := h.Stats()
+	_ = bridges
+	if pairs != 1 {
+		t.Fatalf("应剩 1 个 pair 状态，实际 %d", pairs)
+	}
+	if h.LastSeq(watched) == 0 {
+		t.Fatal("有订阅的 pair 不该被回收（seq 应保留）")
+	}
+}

@@ -9,6 +9,7 @@ package hub
 import (
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/leon82/pcp/cloud/internal/model"
 	"github.com/leon82/pcp/cloud/internal/protocol"
@@ -16,6 +17,9 @@ import (
 
 // ErrBridgeOffline 表示目标设备的 bridge 当前不在线。
 var ErrBridgeOffline = errors.New("bridge_offline")
+
+// nowMs 用系统时钟；回收判定的精度只到分钟级，不需要注入时钟。
+func nowMs() int64 { return time.Now().UnixMilli() }
 
 const (
 	ringSize        = 1000 // 每个 pair 保留的事件条数
@@ -95,6 +99,8 @@ type pairState struct {
 	seq  int64
 	ring []Frame
 	subs map[*subscriber]struct{}
+	// lastActive 用于回收：长期没人订阅、也没新事件的 pair 会把 ring 一直占着
+	lastActive int64
 }
 
 func newPairState() *pairState { return &pairState{subs: map[*subscriber]struct{}{}} }
@@ -218,6 +224,28 @@ func (h *Hub) pairLocked(pairID model.ID) *pairState {
 	return ps
 }
 
+// Sweep 回收「无人订阅且长期无事件」的 pair 状态。
+//
+// 不回收会持续吃内存：每个条目最多带 ringSize 帧。
+// 注意回收会让该 pair 的 seq 归零，客户端侧必须能识别这种情况
+// （web 里做了「本地游标 > hello.lastSeq 就丢弃游标重同步」的保护）。
+func (h *Hub) Sweep(idleAfterMs int64, now int64) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	removed := 0
+	for id, ps := range h.pairs {
+		if len(ps.subs) > 0 {
+			continue
+		}
+		if now-ps.lastActive < idleAfterMs {
+			continue
+		}
+		delete(h.pairs, id)
+		removed++
+	}
+	return removed
+}
+
 // Publish 给事件分配**每 pair 单调递增**的 seq，写入 ring 并分发给订阅者。
 //
 // 偏差说明（相对 protocol/tasks.md §6 的 per-task seq）：这里用 per-pair 单调 seq。
@@ -226,6 +254,7 @@ func (h *Hub) pairLocked(pairID model.ID) *pairState {
 func (h *Hub) Publish(pairID model.ID, env protocol.Envelope, marshal func(protocol.Envelope) ([]byte, error)) Frame {
 	h.mu.Lock()
 	ps := h.pairLocked(pairID)
+	ps.lastActive = nowMs()
 	ps.seq++
 	env.V = protocol.Version
 	env.PairID = protocol.RefPair(pairID)
@@ -263,6 +292,7 @@ func (h *Hub) Subscribe(pairID model.ID) (<-chan Frame, func()) {
 
 	h.mu.Lock()
 	ps := h.pairLocked(pairID)
+	ps.lastActive = nowMs()
 	ps.subs[sub] = struct{}{}
 	h.mu.Unlock()
 

@@ -289,6 +289,15 @@ export class AppController {
           this.#cursors = {};
           this.store.reset();
         }
+        // 游标比服务端还新 → 说明服务端把这个 pair 的状态回收过（seq 归零），
+        // 继续带旧游标只会得到"一条都不回放"的静默空白，必须丢弃重来。
+        const maxCursor = Math.max(0, ...Object.values(this.#cursors));
+        if (payload.lastSeq < maxCursor) {
+          console.warn("[pcp] 服务端 seq 已重置，丢弃本地游标重新同步");
+          this.#cursors = {};
+          this.store.reset();
+        }
+
         this.#bootId = boot || this.#bootId;
         this.store.ingestHello(payload);
         this.#bridgeOnline = payload.bridgeOn;

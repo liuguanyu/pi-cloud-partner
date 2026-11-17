@@ -196,6 +196,22 @@ func runServe(args []string) error {
 		}
 	}
 
+	// 空闲 pair 回收：每 5 分钟扫一次，30 分钟无人订阅且无事件就释放 ring
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if removed := h.Sweep(int64(30*time.Minute/time.Millisecond), time.Now().UnixMilli()); removed > 0 {
+					logger.Info("回收空闲 pair 状态", "count", removed)
+				}
+			}
+		}
+	}()
+
 	srv := httpapi.New(httpapi.Config{
 		Store:          st,
 		Pairing:        pairSvc,

@@ -242,3 +242,28 @@ func TestOfflineBridgeShowsStale(t *testing.T) {
 		t.Fatalf("库里状态不该被视图层改写，实际 %q", stored.Status)
 	}
 }
+
+// 「从未开始」与「中途失联」必须区分：前者是下发时链路就断了（任务没跑），
+// 后者是跑过但结束事件丢了。文案完全不同，混在一起会误导用户。
+func TestReconcileDistinguishesNeverStarted(t *testing.T) {
+	e := newEnv(t)
+	pairRef, _, conn, ctx := setupPairedBridge(t, e)
+
+	pairID, _ := protocol.ParseRef(pairRef, "p")
+	taskID := model.NewID()
+	// 注意：StartedAt 为 nil —— 桥接侧从未开始执行
+	if err := e.store.UpsertTask(ctx, model.Task{
+		ID: taskID, PairID: pairID, Workspace: "/work/a", Status: "queued", Title: "t",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sendSnapshot(t, conn, ctx, nil)
+
+	task, err := e.store.TaskByID(ctx, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "failed" || task.ExitReason != "not_started" {
+		t.Fatalf("期望 failed/not_started，实际 %s/%s", task.Status, task.ExitReason)
+	}
+}

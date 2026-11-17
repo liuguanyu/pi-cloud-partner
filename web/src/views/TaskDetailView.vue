@@ -89,6 +89,23 @@ onMounted(async () => {
   scrollToBottom();
 });
 
+/**
+ * 空内容时的文案。
+ * 不能一律写"等待输出…"——任务已经结束了却还显示等待，会让人以为还在跑。
+ */
+function emptyHint(task: TaskView): string {
+  if (!isTerminal(task.status)) return "等待输出…";
+  if (task.exitReason === "not_started") {
+    return "任务没有开始：下发时与电脑的连接中断了，重新发一次即可。";
+  }
+  if (task.exitReason === "state_lost") {
+    return "任务中途与电脑失联，最终状态未同步。";
+  }
+  if (task.status === "failed") return "任务失败了，没有产生输出。";
+  if (task.status === "cancelled") return "任务已取消。";
+  return "这次任务没有产生输出。";
+}
+
 function send(): void {
   if (!canSend.value) return;
   emit("steer", draft.value.trim());
@@ -119,7 +136,9 @@ function send(): void {
           />
         </template>
 
-        <p v-if="props.task.blocks.length === 0" class="muted center">等待输出…</p>
+        <p v-if="props.task.blocks.length === 0" class="muted center">
+          {{ emptyHint(props.task) }}
+        </p>
 
         <div v-if="props.task.exitReason" class="exit muted">
           结束原因：{{ props.task.exitReason }}

@@ -325,14 +325,28 @@ func (s *Server) reconcileState(ctx context.Context, dev model.Device, env proto
 			entry, seen := snapshot[ref]
 
 			if !seen {
-				// 断连期间结束（或被 pi 侧超时拒绝后跑完），我们没看到结束事件
-				_ = s.cfg.Store.UpsertTask(ctx, model.Task{
-					ID:         task.ID,
-					Status:     "interrupted",
-					ExitReason: "state_lost",
-					SettledAt:  &now,
-				})
-				s.publishTaskState(pair.ID, ref, "interrupted", "state_lost")
+				// 快照里没有它：bridge 手里已经没有这个任务了。
+				//
+				// 但要区分两种完全不同的情况，否则文案会误导：
+				//   从未开始（started_at 为空）→ 下发时链路就断了，任务根本没跑
+				//   跑过但结束事件丢了     → interrupted
+				if task.StartedAt == nil {
+					_ = s.cfg.Store.UpsertTask(ctx, model.Task{
+						ID:         task.ID,
+						Status:     "failed",
+						ExitReason: "not_started",
+						SettledAt:  &now,
+					})
+					s.publishTaskState(pair.ID, ref, "failed", "not_started")
+				} else {
+					_ = s.cfg.Store.UpsertTask(ctx, model.Task{
+						ID:         task.ID,
+						Status:     "interrupted",
+						ExitReason: "state_lost",
+						SettledAt:  &now,
+					})
+					s.publishTaskState(pair.ID, ref, "interrupted", "state_lost")
+				}
 				continue
 			}
 
