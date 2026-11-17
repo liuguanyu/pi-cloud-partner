@@ -18,7 +18,10 @@ type taskStartBody struct {
 	Workspace string            `json:"workspace"`
 	Isolation string            `json:"isolation"` // shared | worktree
 	Images    []json.RawMessage `json:"images"`
-	Title     string            `json:"title"` // 可选：手机端显式命名
+	// Blobs 是手机上传附件的引用（{blobId,kind,name,mimeType}）。
+	// 云端不理解内容，原样转发给 bridge —— 它要用设备凭据下载并落地。
+	Blobs []json.RawMessage `json:"blobs"`
+	Title string            `json:"title"` // 可选：手机端显式命名
 }
 
 type taskInputBody struct {
@@ -96,12 +99,18 @@ func (s *Server) handleTaskStart(w http.ResponseWriter, r *http.Request) {
 		Title:         title,
 	})
 
-	env, err := protocol.New(protocol.TypeTaskStart, now).WithPayload(map[string]any{
+	payload := map[string]any{
 		"prompt":    body.Prompt,
 		"workspace": body.Workspace,
 		"isolation": isolation,
-		"images":    body.Images,
-	})
+	}
+	if len(body.Images) > 0 {
+		payload["images"] = body.Images
+	}
+	if len(body.Blobs) > 0 {
+		payload["blobs"] = body.Blobs
+	}
+	env, err := protocol.New(protocol.TypeTaskStart, now).WithPayload(payload)
 	if err != nil {
 		s.fail(w, err)
 		return

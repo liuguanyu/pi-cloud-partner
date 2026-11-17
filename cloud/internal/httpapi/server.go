@@ -318,8 +318,10 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 
 func decode(r *http.Request, v any) error {
 	defer func() { _ = r.Body.Close() }()
+	// 不用 DisallowUnknownFields：云端本质是转发器（blobs 等字段原样透传给 bridge），
+	// 严格拒收会让「手机端升级了、云端还没升级」这类时序问题直接 500。
+	// 字段合法性由各端自行校验。
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		return errBadRequest
 	}

@@ -432,3 +432,97 @@ func (s *sseReader) next() (sseEvent, bool) {
 		}
 	}
 }
+
+// 回归：手机端每次提交任务都带 blobs（空数组也算），云端以前没有这个字段
+// 且 decode 开了 DisallowUnknownFields → 任何新字段都 500「服务内部错误」。
+// 云端是转发器：blobs 必须原样透传给 bridge，未知字段必须容忍。
+func TestTaskStartToleratesUnknownFieldsAndForwardsBlobs(t *testing.T) {
+	e := newEnv(t)
+
+	// 建立配对
+	var pr pairRequestResp
+	e.do("POST", "/pair/request", "Device "+e.devTok, map[string]any{}, &pr)
+	var claim claimResp
+	e.do("POST", "/pair/claim", "", map[string]any{"code": pr.Code, "deviceName": "x", "claimantId": "claim-a"}, &claim)
+	e.do("POST", "/pair/approve", "Device "+e.devTok, map[string]any{"pairId": claim.PairID, "decision": "approve"}, nil)
+
+	// bridge 连上来（workspace 白名单含 /work/a）
+	wsURL := strings.Replace(e.srv.URL, "http://", "ws://", 1) + "/ws/bridge"
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": []string{"Device " + e.devTok}},
+	})
+	if err != nil {
+		t.Fatalf("bridge 连接失败: %v", err)
+	}
+	defer conn.CloseNow()
+	hello, _ := protocol.New(protocol.TypeBridgeHello, time.Now().UnixMilli()).
+		WithPayload(protocol.BridgeHello{DeviceID: e.deviceID.String(), Version: protocol.Version,
+			Name: "dev-1", Workspaces: []string{"/work/a"}})
+	raw, _ := protocol.Marshal(hello)
+	if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := conn.Read(ctx); err != nil { // welcome
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !e.hub.Online(e.deviceID) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !e.hub.Online(e.deviceID) {
+		t.Fatal("bridge 未注册")
+	}
+	var session struct {
+		PairToken string `json:"pairToken"`
+	}
+	e.do("POST", "/api/session", "Bearer "+claim.RefreshToken, map[string]any{"pairId": claim.PairID}, &session)
+
+	// 1) blobs 为空数组（手机端最常见的形态）→ 不能 500
+	resp := e.do("POST", "/api/task/start?pairId="+claim.PairID, "Bearer "+session.PairToken,
+		map[string]any{"prompt": "hi", "workspace": "/work/a", "isolation": "shared", "blobs": []any{}}, nil)
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("空 blobs 不应 500，实际 %d: %s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+	if _, _, err := conn.Read(ctx); err != nil { // task.start 帧
+		t.Fatalf("bridge 应收到 task.start: %v", err)
+	}
+
+	// 2) blobs 有内容 + 一个未来新字段 → 不能 500，blobs 必须透传给 bridge
+	resp = e.do("POST", "/api/task/start?pairId="+claim.PairID, "Bearer "+session.PairToken,
+		map[string]any{
+			"prompt":      "看图",
+			"workspace":   "/work/a",
+			"blobs":       []any{map[string]any{"blobId": "b_1111", "kind": "image", "name": "s.png", "mimeType": "image/png"}},
+			"futureField": "云端还没实现的字段",
+		}, nil)
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("带 blobs 与新字段不应 500，实际 %d: %s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+
+	_, downData, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("bridge 未收到第二个 task.start: %v", err)
+	}
+	var down protocol.Envelope
+	if err := json.Unmarshal(downData, &down); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(down.Payload, &payload); err != nil {
+		t.Fatalf("payload 不是 JSON: %v", err)
+	}
+	blobs, ok := payload["blobs"].([]any)
+	if !ok || len(blobs) != 1 {
+		t.Fatalf("blobs 应原样透传给 bridge，实际 %v", payload["blobs"])
+	}
+	first, _ := blobs[0].(map[string]any)
+	if first["blobId"] != "b_1111" || first["mimeType"] != "image/png" {
+		t.Fatalf("blob 引用内容被篡改: %v", first)
+	}
+}
