@@ -9,6 +9,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import MessageBlock from "../components/MessageBlock.vue";
 import ToolCard from "../components/ToolCard.vue";
 import ImageBlock from "../components/ImageBlock.vue";
+import FileBlock from "../components/FileBlock.vue";
 import ApprovalSheet from "../components/ApprovalSheet.vue";
 import { isTerminal, type TaskView } from "../core/store.ts";
 import type { UiRequestPayload } from "@wire";
@@ -148,6 +149,7 @@ function send(): void {
             :mimeType="block.mimeType"
             :name="block.name"
           />
+          <FileBlock v-else-if="block.kind === 'file'" :block="block" />
         </template>
 
         <p v-if="props.task.blocks.length === 0" class="muted center">

@@ -33,7 +33,8 @@ export type Block =
   | { kind: "tool"; toolCallId: string; toolName: string; argsText: string; resultText?: string; isError?: boolean; durationMs?: number; done: boolean }
   | { kind: "user"; text: string }
   | { kind: "image"; data: string; mimeType: string }
-  | { kind: "blobImage"; blobId: string; mimeType?: string; name?: string };
+  | { kind: "blobImage"; blobId: string; mimeType?: string; name?: string }
+  | { kind: "file"; blobId: string; name: string; mimeType?: string; bytes?: number; note?: string };
 
 export interface ApprovalRequest extends UiRequestPayload {
   taskId: string;
@@ -355,6 +356,24 @@ export class TaskStore {
         } else if (message?.role === "user") {
           const text = contentToText(message.content);
           if (text) task.blocks.push({ kind: "user", text });
+        }
+        break;
+      }
+      case "pcp_artifact": {
+        // agent 通过 pcp_send 把文件/截图发过来（blob 已上传，这里只有引用）
+        const blobId = String(rec.blobId ?? "");
+        if (blobId) {
+          task.blocks.push({
+            kind: rec.kind === "image" ? "blobImage" : "file",
+            blobId,
+            mimeType: typeof rec.mimeType === "string" ? rec.mimeType : undefined,
+            name: typeof rec.name === "string" ? rec.name : "文件",
+            bytes: typeof rec.bytes === "number" ? rec.bytes : undefined,
+            note: typeof rec.note === "string" ? rec.note : undefined,
+          });
+          // blobImage 块需要 name，file 块需要 note/bytes：上面已按 kind 放好
+          const last = task.blocks[task.blocks.length - 1];
+          if (last && last.kind === "blobImage" && typeof rec.name === "string") last.name = rec.name;
         }
         break;
       }

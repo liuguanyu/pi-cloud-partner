@@ -13,7 +13,7 @@
  *      不传就会「静默不加载」项目级资源。
  *   3. 一个 child 同时只跑一个 run，因此 extension_ui_request 天然能归因到 taskId。
  */
-import { basename } from "node:path";
+import { basename, extname } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
 import { PiClient, isUiRequest, type PiRecord, type UiRequest } from "../pi/client.ts";
 import { execControl, type ControlResult } from "../control/index.ts";
@@ -31,6 +31,10 @@ export interface RunnerOptions {
   sessionDir?: string;
   /** 审批扩展路径；为空表示不加载（危险，仅调试） */
   approvalExtension?: string;
+  /** pcp_send 扩展路径（agent 主动把文件发给手机） */
+  pcpSendExtension?: string;
+  /** sidecar 记录目录（~/.pi/bridge），pcp_send 的发送历史落这里 */
+  bridgeBaseDir?: string;
   /** 审批策略，透传给 pi 子进程里的审批扩展 */
   approvalPolicy: "balanced" | "strict";
   /** deny = 不加载项目级资源（默认、安全）；approve = 加载 */
@@ -205,6 +209,13 @@ export class Runner {
     });
     // 历史块里的内联大图 → blob 引用，避免 historyData 帧被撑大
     const blocks = await this.#blobsifyHistoryImages(result.blocks, req.pairId || this.#pairIdFor(req.taskId));
+    // 合并 pcp_send 的发送记录：pi 的 JSONL 不存自定义工具的 details，
+    // 历史里「agent 发过什么文件」只能靠 sidecar 回放（刷新/重连后不能丢）
+    if (this.#opts.bridgeBaseDir) {
+      const { loadArtifacts, artifactsToBlocks } = await import("./artifacts.ts");
+      const artifacts = artifactsToBlocks(loadArtifacts(this.#opts.bridgeBaseDir, req.taskId));
+      if (artifacts.length > 0) blocks.push(...artifacts);
+    }
     this.#opts.log("历史读取", {
       taskId: req.taskId,
       blocks: blocks.length,
@@ -567,6 +578,7 @@ export class Runner {
     if (this.#opts.model) args.push("--model", this.#opts.model);
     if (this.#opts.sessionDir) args.push("--session-dir", this.#opts.sessionDir);
     if (this.#opts.approvalExtension) args.push("-e", this.#opts.approvalExtension);
+    if (this.#opts.pcpSendExtension) args.push("-e", this.#opts.pcpSendExtension);
     // 必须显式给出信任决定，否则 RPC 模式下会静默跳过项目级资源
     args.push(this.#opts.projectTrust === "approve" ? "--approve" : "--no-approve");
 
@@ -623,6 +635,11 @@ export class Runner {
       this.#opts.log("扩展错误", { error: String(rec.error), event: String(rec.event) });
     }
 
+    // agent 通过 pcp_send 主动发文件：上传成 blob，推给手机，记 sidecar
+    if (rec.type === "tool_execution_end" && rec.toolName === "pcp_send") {
+      void this.#handlePcpSend(child, rec as PiRecord & { result?: { details?: { pcpSend?: { path: string; size: number; note?: string } } } });
+    }
+
     // 跟踪最后一行输出，供未聚焦任务推摘要
     if (rec.type === "message_update") {
       const inner = rec.assistantMessageEvent as { type?: string; delta?: string } | undefined;
@@ -659,6 +676,62 @@ export class Runner {
         }),
       );
     }
+  }
+
+  /**
+   * agent 调用 pcp_send 把文件发给手机。
+   * 扩展只做了校验与返回 details.pcpSend；真正的读取、上传、推送在这里。
+   */
+  async #handlePcpSend(child: Child, rec: PiRecord & { result?: { details?: { pcpSend?: { path: string; size: number; note?: string } } } }): Promise<void> {
+    const task = child.task;
+    const details = rec.result?.details?.pcpSend;
+    if (!task || !details?.path) return;
+    const pairId = task.req.pairId;
+    const uploader = this.#opts.uploader;
+    if (!uploader) {
+      this.#opts.log("pcp_send 无上传器，忽略", { taskId: task.req.taskId });
+      return;
+    }
+    const name = basename(details.path);
+    const mimeType = guessMime(details.path);
+    const kind = mimeType.startsWith("image/") ? "image" : "file";
+    const result = await uploader.uploadLocalFile(details.path, mimeType, pairId, name);
+    if (!result) {
+      this.#opts.log("pcp_send 上传失败", { taskId: task.req.taskId, path: details.path });
+      return;
+    }
+    // 推给手机：复用 piEvent 透传，负载是一个合成的 pcp_artifact 记录
+    this.#up(
+      envelope(Up.piEvent, {
+        pairId,
+        taskId: task.req.taskId,
+        epoch: task.epoch,
+        payload: {
+          type: "pcp_artifact",
+          blobId: result.blobId,
+          kind,
+          name: name,
+          mimeType: result.mimeType ?? mimeType,
+          bytes: details.size,
+          note: details.note,
+        },
+      }),
+    );
+    // 记 sidecar：pi 的 JSONL 不存 details，历史回放靠它
+    if (this.#opts.bridgeBaseDir) {
+      const { recordArtifact } = await import("./artifacts.ts");
+      recordArtifact(this.#opts.bridgeBaseDir, {
+        taskId: task.req.taskId,
+        blobId: result.blobId,
+        kind,
+        name,
+        mimeType: result.mimeType ?? mimeType,
+        bytes: details.size,
+        note: details.note,
+        at: Date.now(),
+      });
+    }
+    this.#opts.log("pcp_send 已发送", { taskId: task.req.taskId, name, kind, bytes: details.size });
   }
 
   /**
@@ -846,4 +919,19 @@ export function canonical(path: string): string {
     }
   }
   return trimmed;
+}
+
+
+// ── 工具函数 ─────────────────────────────────────────────────
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+  ".svg": "image/svg+xml", ".pdf": "application/pdf",
+  ".json": "application/json", ".md": "text/markdown", ".txt": "text/plain",
+  ".log": "text/plain", ".csv": "text/csv", ".zip": "application/zip",
+  ".html": "text/html", ".js": "text/javascript", ".ts": "text/typescript",
+};
+function guessMime(path: string): string {
+  return MIME_BY_EXT[extname(path).toLowerCase()] ?? "application/octet-stream";
 }

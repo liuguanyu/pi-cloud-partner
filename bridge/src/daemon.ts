@@ -17,7 +17,7 @@
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CloudClient, type CloudStatus } from "./cloud/client.ts";
-import { loadConfig, loadCredentials } from "./cloud/config.ts";
+import { loadConfig, loadCredentials, bridgeDir } from "./cloud/config.ts";
 import { Down, Up, envelope, type Envelope } from "./cloud/protocol.ts";
 import { Runner, type TaskRequest } from "./cloud/runner.ts";
 import { startConsole, type ConsoleHandle } from "./local/console.ts";
@@ -28,6 +28,7 @@ import { httpBase } from "./local/console.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APPROVAL_EXTENSION = resolve(HERE, "..", "extensions", "approval.ts");
+const PCP_SEND_EXTENSION = resolve(HERE, "..", "extensions", "pcp-send.ts");
 
 function log(msg: string, data?: Record<string, unknown>): void {
   const stamp = new Date().toISOString().slice(11, 19);
@@ -87,6 +88,8 @@ async function main(): Promise<void> {
     model: cfg.model,
     sessionDir: cfg.sessionDir,
     approvalExtension: cfg.approval ? APPROVAL_EXTENSION : undefined,
+    pcpSendExtension: PCP_SEND_EXTENSION,
+    bridgeBaseDir: bridgeDir(),
     projectTrust: cfg.projectTrust,
     approvalPolicy: cfg.approvalPolicy,
     terminalBusyWindowMs: cfg.terminalBusyWindowSeconds * 1000,

@@ -5,6 +5,8 @@
  * 超过阈值的在转发前传成 blob，事件里换成引用（手机再用签名 URL 渲染）。
  */
 
+import { readFileSync } from "node:fs";
+
 export interface BlobUploadResult {
   blobId: string;
   kind?: string;
@@ -32,32 +34,58 @@ export interface BlobUploader {
     pairId: string,
     name?: string,
   ): Promise<BlobUploadResult | undefined>;
+  /** 读本地文件上传（pcp_send 用）。 */
+  uploadLocalFile(
+    filePath: string,
+    mimeType: string,
+    pairId: string,
+    name: string,
+  ): Promise<BlobUploadResult | undefined>;
 }
 
 export function createUploader(opts: UploaderOptions): BlobUploader {
   return {
     async uploadImage(base64Data, mimeType, pairId, name) {
       const buf = Buffer.from(base64Data, "base64");
-      const form = new FormData();
-      // Blob 带正确的 type，服务端 mime 兜底才不会把 png 存成 octet-stream
-      form.append("file", new Blob([buf], { type: mimeType }), name ?? `agent-${Date.now()}.png`);
-
-      let response: Response;
+      return uploadBuffer(buf, mimeType, name ?? `agent-${Date.now()}.png`, pairId, opts);
+    },
+    async uploadLocalFile(filePath, mimeType, pairId, name) {
+      let buf: Buffer;
       try {
-        response = await fetch(
-          `${opts.baseUrl}/api/blob?pairId=${encodeURIComponent(pairId)}`,
-          { method: "POST", headers: { Authorization: `Device ${opts.deviceToken}` }, body: form },
-        );
+        buf = readFileSync(filePath);
       } catch (error) {
-        opts.log?.("图片转存失败（网络）", { error: String(error), bytes: buf.byteLength });
+        opts.log?.("pcp_send 读文件失败", { filePath, error: String(error) });
         return undefined;
       }
-      if (!response.ok) {
-        opts.log?.("图片转存失败", { status: response.status, bytes: buf.byteLength });
-        return undefined;
-      }
-      const payload = (await response.json()) as BlobUploadResult;
-      return payload?.blobId ? payload : undefined;
+      return uploadBuffer(buf, mimeType, name, pairId, opts);
     },
   };
+}
+
+async function uploadBuffer(
+  buf: Buffer,
+  mimeType: string,
+  name: string,
+  pairId: string,
+  opts: UploaderOptions,
+): Promise<BlobUploadResult | undefined> {
+  const form = new FormData();
+  // Blob 带正确的 type，服务端 mime 兜底才不会把 png 存成 octet-stream
+  form.append("file", new Blob([buf], { type: mimeType }), name);
+  let response: Response;
+  try {
+    response = await fetch(
+      `${opts.baseUrl}/api/blob?pairId=${encodeURIComponent(pairId)}`,
+      { method: "POST", headers: { Authorization: `Device ${opts.deviceToken}` }, body: form },
+    );
+  } catch (error) {
+    opts.log?.("文件上传失败（网络）", { error: String(error), bytes: buf.byteLength });
+    return undefined;
+  }
+  if (!response.ok) {
+    opts.log?.("文件上传失败", { status: response.status, bytes: buf.byteLength });
+    return undefined;
+  }
+  const payload = (await response.json()) as BlobUploadResult;
+  return payload?.blobId ? payload : undefined;
 }

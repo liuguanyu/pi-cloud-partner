@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { PiClient, isUiRequest, type PiRecord, type UiRequest } from "./pi/client.ts";
 import { rewriteLargeImages } from "./cloud/image-transform.ts";
+import { recordArtifact, loadArtifacts, artifactsToBlocks } from "./cloud/artifacts.ts";
 import { execControl, parseInput } from "./control/index.ts";
 import { listSessions, resolveSession } from "./sessions/index.ts";
 
@@ -219,6 +220,33 @@ async function selftest(): Promise<number> {
 
   // ── 纯函数检查（不依赖 pi）：live 流与历史回放共用的图片改写规则 ──
   await checkImageRewrite(record);
+  // ── pcp_send 发送记录：sidecar 写入/读取/去重 ──
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "pcp-art-"));
+  try {
+    recordArtifact(dir, { taskId: "t1", blobId: "b_a", kind: "image", name: "s.png", mimeType: "image/png", bytes: 10, at: 1 });
+    recordArtifact(dir, { taskId: "t1", blobId: "b_b", kind: "file", name: "l.log", mimeType: "text/plain", bytes: 20, note: "日志", at: 2 });
+    recordArtifact(dir, { taskId: "t2", blobId: "b_c", kind: "file", name: "x.bin", mimeType: "application/octet-stream", bytes: 5, at: 3 });
+    const t1 = loadArtifacts(dir, "t1");
+    const t2 = loadArtifacts(dir, "t2");
+    record("sidecar:按任务隔离", t1.length === 2 && t2.length === 1, `t1=${t1.length} t2=${t2.length}`);
+    // 去重：同一 blobId 发两次只显示一次
+    recordArtifact(dir, { taskId: "t1", blobId: "b_a", kind: "image", name: "s.png", mimeType: "image/png", bytes: 10, at: 4 });
+    const deduped = artifactsToBlocks(loadArtifacts(dir, "t1"));
+    record(
+      "sidecar:同文件去重",
+      deduped.length === 2 &&
+        (deduped[0] as { kind?: string } | undefined)?.kind === "blobImage" &&
+        (deduped[1] as { kind?: string } | undefined)?.kind === "file",
+      JSON.stringify(deduped.map((b) => b.kind)),
+    );
+    // 不存在的任务
+    record("sidecar:无记录返回空", loadArtifacts(dir, "nope").length === 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 
   const client = new PiClient({ cwd: process.cwd(), args: ["--no-session"] });
   const t0 = Date.now();
