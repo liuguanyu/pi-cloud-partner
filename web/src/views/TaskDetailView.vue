@@ -5,7 +5,7 @@
  * 这里的输入框语义 = **steer / follow_up**（继续这个任务），
  * 与列表页的「新任务」是两件事，见 protocol/control.md §5。
  */
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import MessageBlock from "../components/MessageBlock.vue";
 import ToolCard from "../components/ToolCard.vue";
 import ApprovalSheet from "../components/ApprovalSheet.vue";
@@ -27,18 +27,67 @@ const emit = defineEmits<{
 
 const scroller = ref<HTMLElement | null>(null);
 const draft = ref("");
+/** 视口是否贴在底部；只有贴底时才自动跟随新内容 */
+const atBottom = ref(true);
+/** 用户翻到上面后又来了新内容，用这个提示他 */
+const hasNewBelow = ref(false);
 
 const terminal = computed(() => (props.task ? isTerminal(props.task.status) : true));
 const canSend = computed(() => !terminal.value && draft.value.trim().length > 0);
+const showJump = computed(() => !atBottom.value);
 
+const BOTTOM_THRESHOLD_PX = 80;
+
+function measure(): void {
+  const node = scroller.value;
+  if (!node) return;
+  const distance = node.scrollHeight - node.scrollTop - node.clientHeight;
+  const bottom = distance < BOTTOM_THRESHOLD_PX;
+  atBottom.value = bottom;
+  if (bottom) hasNewBelow.value = false;
+}
+
+function scrollToBottom(smooth = false): void {
+  const node = scroller.value;
+  if (!node) return;
+  node.scrollTo({ top: node.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+  atBottom.value = true;
+  hasNewBelow.value = false;
+}
+
+/**
+ * 跟随新内容。
+ *
+ * 注意监听的是 **cursor（事件水位）** 而不是 blocks.length：
+ * 流式打印是在同一个 block 内追加文本，块数不变，
+ * 只监听块数的话"边打边滚"根本不成立（之前的 bug）。
+ */
 watch(
-  () => props.task?.blocks.length,
+  () => [props.task?.cursor, props.task?.blocks.length] as const,
   async () => {
     await nextTick();
-    const node = scroller.value;
-    if (node) node.scrollTop = node.scrollHeight;
+    if (atBottom.value) {
+      scrollToBottom();
+    } else {
+      hasNewBelow.value = true;
+    }
   },
 );
+
+// 打开任务时直接落到最新位置
+watch(
+  () => props.task?.taskId,
+  async () => {
+    await nextTick();
+    atBottom.value = true;
+    scrollToBottom();
+  },
+);
+
+onMounted(async () => {
+  await nextTick();
+  scrollToBottom();
+});
 
 function send(): void {
   if (!canSend.value) return;
@@ -49,7 +98,7 @@ function send(): void {
 
 <template>
   <div class="detail">
-    <div ref="scroller" class="timeline">
+    <div ref="scroller" class="timeline" @scroll.passive="measure">
       <p v-if="!props.task" class="muted center">任务不存在或尚未同步</p>
       <template v-else>
         <div class="headline">
@@ -78,6 +127,10 @@ function send(): void {
       </template>
     </div>
 
+    <button v-if="showJump" class="jump" @click="scrollToBottom(true)">
+      ↓ 回到最新<template v-if="hasNewBelow"> · 有新内容</template>
+    </button>
+
     <footer>
       <button v-if="!terminal" class="danger" :disabled="props.busy" @click="emit('cancel')">中断</button>
       <textarea
@@ -102,7 +155,7 @@ function send(): void {
 </template>
 
 <style scoped>
-.detail { display: flex; flex-direction: column; height: 100%; }
+.detail { position: relative; display: flex; flex-direction: column; height: 100%; }
 
 .timeline {
   flex: 1;
@@ -129,4 +182,19 @@ footer textarea { flex: 1; max-height: 96px; font-size: 14px; }
 footer button { flex: 0 0 auto; padding: 10px 14px; }
 
 .error { color: var(--err); font-size: 12px; padding: 0 14px 8px; margin: 0; }
+
+/* 翻上去之后才出现；贴在右下、输入框之上 */
+.jump {
+  position: absolute;
+  right: 14px;
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  color: var(--fg);
+  z-index: 10;
+}
 </style>

@@ -106,6 +106,15 @@ async function run<T>(fn: () => Promise<T>): Promise<void> {
   }
 }
 
+/**
+ * 「断开」= 立刻作废配对，手机需要重新扫码。
+ * 它在标题栏、一次点击就生效，手机上滑动时极易误触 —— 必须二次确认。
+ */
+function confirmUnpair(): void {
+  const ok = window.confirm("断开后这台手机需要重新扫码配对。确定断开？");
+  if (ok) void run(() => actions.revokePair());
+}
+
 async function handleCreate(input: { prompt: string; workspace: string; isolation: "shared" | "worktree" }): Promise<void> {
   await run(async () => {
     const taskId = await actions.startTask(input);
@@ -134,7 +143,7 @@ async function handleAnswer(
         <strong>pi</strong>
         <span class="muted sse">{{ sseLabel }}</span>
       </div>
-      <button class="ghost" @click="run(() => actions.revokePair())">断开</button>
+      <button class="ghost" @click="confirmUnpair">断开</button>
     </header>
 
     <div v-if="approvals.length > 0 && !activeTask?.pendingApproval" class="approval-banner" @click="go(`#/t/${approvals[0]!.taskId}`)">
