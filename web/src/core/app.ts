@@ -148,6 +148,12 @@ export class AppController {
 
   async bootstrap(): Promise<void> {
     this.#setPhase("booting");
+    // localStorage 可能被 iOS 清掉：先尝试从 IndexedDB 自愈，
+    // 成功的话用户完全无感（不用重新扫码）
+    const restored = await this.#creds.restoreFromBackup();
+    if (restored) {
+      console.warn("[pcp] 凭据已从 IndexedDB 备份恢复");
+    }
     const creds = this.#creds.load();
     if (!creds.pairId || !creds.refreshToken) {
       this.#setPhase("need-pair");

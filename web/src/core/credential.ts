@@ -4,6 +4,7 @@
  * 职责单一：只做「读 / 写 / 清空」，不理解配对流程，也不发请求。
  * 换存储介质（IndexedDB / Keychain）时只改这一个文件。
  */
+import { idbDelete, idbGet, idbSet } from "./idb.ts";
 
 export interface StoredCredentials {
   /**
@@ -30,6 +31,27 @@ export class CredentialStore {
     this.#storage = storage;
   }
 
+  /**
+   * localStorage 被系统清掉时从 IndexedDB 自愈。
+   *
+   * iOS 清存储时 localStorage 先死、IndexedDB 后死（配额大、被视为更重要）。
+   * backup 里还有凭据时写回 localStorage，后续逻辑无感继续，不用重新扫码。
+   */
+  async restoreFromBackup(): Promise<boolean> {
+    if (typeof indexedDB === "undefined") return false;
+    if (this.#storage.getItem(KEY)) return false;
+    try {
+      const backup = await idbGet<StoredCredentials>(KEY);
+      if (backup && typeof backup === "object" && (backup.refreshToken || backup.pairToken)) {
+        this.#storage.setItem(KEY, JSON.stringify(backup));
+        return true;
+      }
+    } catch {
+      /* IndexedDB 不可用就算了 */
+    }
+    return false;
+  }
+
   load(): StoredCredentials {
     try {
       const raw = this.#storage.getItem(KEY);
@@ -48,11 +70,18 @@ export class CredentialStore {
       if (next[key] === undefined) delete next[key];
     }
     this.#storage.setItem(KEY, JSON.stringify(next));
+    // 双写 IndexedDB：主存储被清时，它是唯一能救回配对关系的备份
+    if (typeof indexedDB !== "undefined") {
+      void idbSet(KEY, next).catch(() => {});
+    }
     return next;
   }
 
   clear(): void {
     this.#storage.removeItem(KEY);
+    if (typeof indexedDB !== "undefined") {
+      void idbDelete(KEY).catch(() => {});
+    }
   }
 
   /** pairToken 是否可用（留 60s 余量，避免边界上刚过期）。 */

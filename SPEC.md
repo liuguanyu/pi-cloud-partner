@@ -349,6 +349,21 @@ store 不变量：一个 device 同时**只有一个 active pair**（`CreatePair
 - SSE 握手 401 → 用 refreshToken 换新 pairToken 重建流（后台挂起期间 token 几乎必然过期，这是主要恢复路径）
 - `visibilitychange` 恢复可见 → 立即 `refresh()`（device 锚定的全量列表 + 换 token + 确保 SSE 在跑）
 
+**手机存储易失性（实测：iOS 清掉了 PWA 的全部 localStorage）**
+
+实测现象：Safari「添加到主屏幕」的 PWA，配对凭据在某次 iOS 存储清理后
+**整个 localStorage 被清空**（连 claimantId 都没了），用户被迫重新扫码。
+
+对策（分层，每层都接受"下一层失败"的现实）：
+1. **凭据双写 IndexedDB**：localStorage 被清时先从 IndexedDB 自愈（iOS 清
+   临时数据时 localStorage 先死、IndexedDB 存活更久）。用户在下次打开时
+   完全无感，不触发重新配对
+2. **真 PWA**（manifest + apple-touch-icon + standalone）：iOS 对待更正式，
+   生命周期行为更可预期
+3. **兜底**：用户手动在系统设置里清网站数据时两个存储一起死，只能重配 ——
+   这是安全要求（L1 凭据就是信任凭证，不能做到"清了还能自动恢复"）。
+   重配体验已优化：device 锚定保证任务全数回来，一次扫码 10 秒完事
+
 保留期 7 天（与 SPEC §6 一致），GC 待做。
 
 ## 8. 里程碑与验收标准
