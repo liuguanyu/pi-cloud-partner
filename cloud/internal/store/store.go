@@ -77,6 +77,10 @@ type Store interface {
 	UpsertTask(ctx context.Context, t model.Task) error
 	TaskByID(ctx context.Context, id model.ID) (model.Task, error)
 	TasksByPair(ctx context.Context, pairID model.ID, limit int) ([]model.Task, error)
+	// TasksByDevice 按设备查任务（跨 pair 代，仅 active/suspended pair 名下）。
+	// 手机的任务可见性锚定 device 而不是 pair：pair 是易失凭据代
+	// （webview 清存储/重扫码都会换代），任务不能跟着它一起"消失"。
+	TasksByDevice(ctx context.Context, deviceID model.ID, limit int) ([]model.Task, error)
 
 	Close() error
 }

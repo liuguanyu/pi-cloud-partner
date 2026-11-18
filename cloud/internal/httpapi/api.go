@@ -270,7 +270,10 @@ func (s *Server) handleTaskList(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	tasks, err := s.cfg.Store.TasksByPair(r.Context(), pair.ID, 50)
+	// 可见性锚定 device 而非 pair：pair 是易失凭据代（webview 清存储、
+	// 重扫码都会换代），若按当前 pair 过滤，用户重新扫码后旧任务全部"消失"。
+	// device（手机↔Mac 关系）才是 L1 信任锚，任务应跟着它跨代可见。
+	tasks, err := s.cfg.Store.TasksByDevice(r.Context(), pair.DeviceID, 50)
 	if err != nil && err != store.ErrNotFound {
 		s.fail(w, err)
 		return
@@ -354,8 +357,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if task.PairID != pair.ID {
-		writeErr(w, http.StatusForbidden, "forbidden", "该任务不属于当前配对")
+	// 归属校验锚定 device：任务最初属于某代 pair，手机可能已换到新一代，
+	// 只要两代 pair 属于同一台 Mac（device），就允许回看。
+	taskPair, err := s.cfg.Store.PairByID(r.Context(), task.PairID)
+	if err != nil || taskPair.DeviceID != pair.DeviceID {
+		writeErr(w, http.StatusForbidden, "forbidden", "该任务不属于当前设备")
 		return
 	}
 	if task.SessionID == "" {

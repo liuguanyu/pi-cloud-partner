@@ -285,8 +285,20 @@ func (s *Server) ingestBridgeFrame(ctx context.Context, dev model.Device, env pr
 		return
 	}
 
-	s.cfg.Hub.Publish(pairID, env, protocol.Marshal)
+	// 重路由到设备当前 active pair 的 ring：手机订阅的是 active pair，
+	// 而 bridge 带的可能是发起任务那代 pair（follow_up 旧任务时必然分裂）。
+	// 不重路由，手机就收不到任何实时事件 —— 表现为"任务在跑但屏幕不动"。
+	targetPair := s.activePairID(ctx, dev, pairID)
+	s.cfg.Hub.Publish(targetPair, env, protocol.Marshal)
 	s.trackTask(ctx, pairID, env)
+}
+
+// activePairID 返回设备当前 active pair 的 id，找不到（切换瞬间）时回退 fallback。
+func (s *Server) activePairID(ctx context.Context, dev model.Device, fallback model.ID) model.ID {
+	if p, err := s.cfg.Store.ActivePairByDevice(ctx, dev.ID); err == nil && p != nil {
+		return p.ID
+	}
+	return fallback
 }
 
 // reconcileState 用 bridge 上报的快照校正云端缓存。
@@ -312,7 +324,17 @@ func (s *Server) reconcileState(ctx context.Context, dev model.Device, env proto
 	now := s.cfg.Now()
 	pairs, _ := s.cfg.Store.PairsByDevice(ctx, dev.ID)
 
+	// 状态推送的目标 ring：设备当前 active pair（手机订阅它）。
+	// 对账发现的是"旧代 pair 名下"的任务，若仍发往旧 pair ring，手机收不到。
+	var activeID model.ID
+	if ap, err := s.cfg.Store.ActivePairByDevice(ctx, dev.ID); err == nil && ap != nil {
+		activeID = ap.ID
+	}
+
 	for _, pair := range pairs {
+		if activeID == (model.ID{}) {
+			activeID = pair.ID // 拿不到 active（切换瞬间）就退到对账循环自己的 pair
+		}
 		tasks, err := s.cfg.Store.TasksByPair(ctx, pair.ID, 200)
 		if err != nil {
 			continue
@@ -337,7 +359,7 @@ func (s *Server) reconcileState(ctx context.Context, dev model.Device, env proto
 						ExitReason: "not_started",
 						SettledAt:  &now,
 					})
-					s.publishTaskState(pair.ID, ref, "failed", "not_started")
+					s.publishTaskState(activeID, ref, "failed", "not_started")
 				} else {
 					_ = s.cfg.Store.UpsertTask(ctx, model.Task{
 						ID:         task.ID,
@@ -345,7 +367,7 @@ func (s *Server) reconcileState(ctx context.Context, dev model.Device, env proto
 						ExitReason: "state_lost",
 						SettledAt:  &now,
 					})
-					s.publishTaskState(pair.ID, ref, "interrupted", "state_lost")
+					s.publishTaskState(activeID, ref, "interrupted", "state_lost")
 				}
 				continue
 			}
@@ -353,7 +375,7 @@ func (s *Server) reconcileState(ctx context.Context, dev model.Device, env proto
 			// 快照为准
 			if entry.Status != task.Status {
 				_ = s.cfg.Store.UpsertTask(ctx, model.Task{ID: task.ID, Status: entry.Status})
-				s.publishTaskState(pair.ID, ref, entry.Status, "")
+				s.publishTaskState(activeID, ref, entry.Status, "")
 			}
 
 			// 有待审批的：把弹层重新推给手机，否则重启后用户永远点不了

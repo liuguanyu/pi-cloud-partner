@@ -16,7 +16,11 @@ export type SseStatus = "idle" | "connecting" | "online" | "offline";
 
 export interface SseClientOptions {
   url: string;
-  token: string;
+  /** 每次（重）连时读取最新 token —— pairToken 有 12h TTL，重连时必须现取，
+   *  否则页面挂几小时后的重连会用过期 token 死循环。 */
+  token: () => string;
+  /** 握手收到 401：凭据问题，重试多少次都没用，上层必须换 token 后重建客户端 */
+  onUnauthorized?: () => void;
   /** 每次（重）连时读取当前 per-task 游标，交给服务端回放缺口。 */
   cursors: () => Record<string, number>;
   onFrame: (env: Envelope) => void;
@@ -91,10 +95,12 @@ export class SseClient {
     const controller = new AbortController();
     this.#abort = controller;
 
+    const token = this.#opts.token();
+    if (!token) throw new Error("SSE 握手失败：没有可用凭据");
     const response = await fetch(url.toString(), {
       method: "GET",
       headers: {
-        Authorization: `Bearer ${this.#opts.token}`,
+        Authorization: `Bearer ${token}`,
         Accept: "text/event-stream",
       },
       signal: controller.signal,
@@ -102,6 +108,10 @@ export class SseClient {
       cache: "no-store",
     });
 
+    if (response.status === 401) {
+      this.#opts.onUnauthorized?.();
+      throw new Error("SSE 握手 401：pairToken 已失效");
+    }
     if (!response.ok || !response.body) {
       throw new Error(`SSE 握手失败 HTTP ${response.status}`);
     }

@@ -7,6 +7,7 @@ package memory
 import (
 	"context"
 	"slices"
+	"sort"
 	"sync"
 
 	"github.com/leon82/pcp/cloud/internal/model"
@@ -466,6 +467,39 @@ func (s *Store) BlobBySHA(_ context.Context, sha string) (model.Blob, error) {
 		return model.Blob{}, store.ErrNotFound
 	}
 	return s.blobs[id], nil
+}
+
+func (s *Store) TasksByDevice(_ context.Context, deviceID model.ID, limit int) ([]model.Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	// 收集该 device 所有 pair（任意状态）的 id
+	pairIDs := make(map[model.ID]bool)
+	for id, p := range s.pairs {
+		// 不按 pair 状态过滤：takeover 会让旧代 revoked，但旧代任务仍要可见
+		if p.DeviceID == deviceID {
+			pairIDs[id] = true
+		}
+	}
+	out := make([]model.Task, 0, limit)
+	for _, t := range s.tasks {
+		if pairIDs[t.PairID] {
+			out = append(out, t)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ai, bi := int64(0), int64(0)
+		if out[i].StartedAt != nil {
+			ai = *out[i].StartedAt
+		}
+		if out[j].StartedAt != nil {
+			bi = *out[j].StartedAt
+		}
+		return ai > bi
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (s *Store) Close() error { return nil }

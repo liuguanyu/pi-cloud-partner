@@ -28,6 +28,7 @@ export interface BridgeApi {
     unpair(): Promise<void>;
     loadHistory(taskId: string): Promise<void>;
     refreshWorkspaces(): Promise<void>;
+    refresh(): Promise<void>;
   };
 }
 
@@ -72,6 +73,7 @@ export function useBridge(): BridgeApi {
       unpair: () => app.unpair(),
       loadHistory: (taskId) => app.loadHistory(taskId),
       refreshWorkspaces: () => app.refreshWorkspaces(),
+      refresh: () => app.refresh(),
     },
   };
 }

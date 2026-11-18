@@ -688,6 +688,45 @@ func (s *Store) TasksByPair(ctx context.Context, pairID model.ID, limit int) ([]
 
 // ── blob 元数据 ──────────────────────────────────────────────
 
+// TasksByDevice 跨 pair 代查任务（JOIN pairs→devices）。
+// 可见性锚定 device：pair 会随重扫码换代，任务不能跟着消失。
+func (s *Store) TasksByDevice(ctx context.Context, deviceID model.ID, limit int) ([]model.Task, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT t.id, t.pair_id, t.workspace, t.workspace_mode, t.status, t.title, t.session_id,
+		        t.started_at, t.settled_at, t.exit_reason, t.blob_count
+		 FROM tasks t
+		 JOIN pairs p ON p.id = t.pair_id
+		 WHERE p.device_id = ?
+		 ORDER BY COALESCE(t.started_at, 0) DESC
+		 LIMIT ?`,
+		deviceID[:], limit)
+	if err != nil {
+		return nil, wrap(err)
+	}
+	defer rows.Close()
+
+	out := make([]model.Task, 0, limit)
+	for rows.Next() {
+		var (
+			t                model.Task
+			rawID, rawPair   []byte
+			mode             string
+			started, settled sql.NullInt64
+		)
+		if err := rows.Scan(&rawID, &rawPair, &t.Workspace, &mode, &t.Status, &t.Title, &t.SessionID,
+			&started, &settled, &t.ExitReason, &t.BlobCount); err != nil {
+			return nil, wrap(err)
+		}
+		copy(t.ID[:], rawID)
+		copy(t.PairID[:], rawPair)
+		t.WorkspaceMode = mode
+		t.StartedAt = toPtr(started)
+		t.SettledAt = toPtr(settled)
+		out = append(out, t)
+	}
+	return out, wrap(rows.Err())
+}
+
 func (s *Store) CreateBlob(ctx context.Context, b model.Blob) error {
 	var taskID any
 	if b.TaskID != nil {

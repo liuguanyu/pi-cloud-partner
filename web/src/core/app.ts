@@ -82,6 +82,8 @@ export class AppController {
   #listeners = new Set<() => void>();
   #pollTimer: ReturnType<typeof setTimeout> | null = null;
   #tasksTimer: ReturnType<typeof setInterval> | null = null;
+  /** #recoverCredentials 的重入锁：401 会连发，只处理一次 */
+  #recovering = false;
 
   constructor(opts: AppControllerOptions) {
     this.#api = new ApiClient({ baseUrl: opts.baseUrl ?? "" });
@@ -273,7 +275,12 @@ export class AppController {
 
     this.#sse = new SseClient({
       url: `/sse?pairId=${encodeURIComponent(pairId)}`,
-      token: pairToken,
+      // 现取 token：SSE 会随页面存活数小时，启动时的闭包值早就过期了
+      token: () => {
+        const c = this.#creds.load();
+        return this.#creds.hasFreshPairToken(c) ? (c.pairToken ?? "") : "";
+      },
+      onUnauthorized: () => void this.#recoverCredentials(),
       cursors: () => this.#cursors,
       onFrame: (env) => {
         if (typeof env.seq === "number" && env.taskId && env.seq > (this.#cursors[env.taskId] ?? 0)) {
@@ -320,6 +327,74 @@ export class AppController {
     if (this.#tasksTimer) {
       clearInterval(this.#tasksTimer);
       this.#tasksTimer = null;
+    }
+  }
+
+  /**
+   * SSE 握手 401：pairToken 过期或被作废。
+   * 用 refreshToken 换新的再重建流；refreshToken 也死了才回到配对页。
+   * 页面在后台时 JS 被挂起，回来时 pairToken 几乎必然过期，这是主要恢复路径。
+   */
+  async #recoverCredentials(): Promise<void> {
+    const creds = this.#creds.load();
+    if (!creds.refreshToken || !creds.pairId) {
+      this.#setPhase("need-pair", "配对已失效，请重新扫码");
+      return;
+    }
+    // 防止 401 风暴：SseClient 内部还在退避重试，这里串行化处理
+    if (this.#recovering) return;
+    this.#recovering = true;
+    try {
+      const session = await this.#api.session(creds.refreshToken, creds.pairId);
+      this.#creds.patch({ pairToken: session.pairToken, pairTokenExpiresAt: session.expiresAt });
+      this.#stopSse();
+      this.#startSse(session.pairToken);
+      this.#startTaskRefresh(session.pairToken);
+      this.#refreshWorkspaces(session.pairToken);
+      this.#refreshTasks(session.pairToken);
+    } catch (error) {
+      if (error instanceof ApiError && error.isAuthFailure) {
+        this.#creds.patch({ pairId: undefined, refreshToken: undefined, pairToken: undefined });
+        this.#setPhase("need-pair", "配对已失效，请重新扫码");
+      } else {
+        // 网络问题：SseClient 的退避循环会带着新 token 继续试
+      }
+    } finally {
+      this.#recovering = false;
+    }
+  }
+
+  /**
+   * 重新同步（幂等）。页面从后台恢复、SSE 重连成功后调用。
+   *
+   * 为什么必须显式做：iOS/微信 webview 把页面挂起时 JS 冻结、定时器停摆、
+   * 网络断开，pairToken 可能正好在这期间过期。回来后不能只指望 30s 的
+   * 定时刷新（它带着旧 token），要立刻拉一次最新列表 + 刷新 token。
+   * 任务列表 API 现在是 device 锚定，这次拉取会把所有 pair 代的任务带回来。
+   */
+  async refresh(): Promise<void> {
+    if (this.#phase !== "ready") return;
+    const creds = this.#creds.load();
+    if (!creds.refreshToken || !creds.pairId) return;
+    let pairToken = this.#creds.hasFreshPairToken(creds) ? creds.pairToken : undefined;
+    if (!pairToken) {
+      try {
+        const session = await this.#api.session(creds.refreshToken, creds.pairId);
+        pairToken = session.pairToken;
+        this.#creds.patch({ pairToken: session.pairToken, pairTokenExpiresAt: session.expiresAt });
+      } catch {
+        return; // 换 token 失败由 401 恢复 / 下次重试兜底
+      }
+    }
+    if (!pairToken) return;
+    // 并行拉：列表 + workspace 白名单
+    await Promise.all([
+      this.#refreshTasks(pairToken),
+      this.#refreshWorkspaces(pairToken),
+    ]);
+    // 确保 SSE 在跑（若之前断了，重启它）
+    if (this.#sse?.status !== "online" && this.#sse?.status !== "connecting") {
+      this.#startSse(pairToken);
     }
   }
 

@@ -43,6 +43,21 @@ window.addEventListener("hashchange", () => {
   deviceMode.value = isLoopback && (location.hash === "#/device" || location.pathname === "/device");
 });
 
+/**
+ * 页面从后台恢复可见 → 立即重新同步。
+ *
+ * 这是「扫码进去 → 切后台干别的 → 回来任务没了」的解药：webview 挂起页面
+ * 期间 JS 冻结、网络断、pairToken 可能过期，回来后 30s 定时刷新还带着旧
+ * token。这里一可见就拉一次 device 锚定的全量列表 + 必要时换 token。
+ */
+function onVisible(): void {
+  if (document.visibilityState === "visible" && !deviceMode.value) {
+    void actions.refresh();
+  }
+}
+document.addEventListener("visibilitychange", onVisible);
+window.addEventListener("pageshow", onVisible); // bfcache 恢复也走一次
+
 const activeTaskId = computed(() => {
   const match = /^#\/t\/([^/]+)$/.exec(route.value);
   return match?.[1] ? decodeURIComponent(match[1]) : null;

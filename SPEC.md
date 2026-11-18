@@ -326,6 +326,29 @@ blob 管道是双向通用的，但 agent 产出要发给手机需要一个**显
    且它不增加新的读权限（agent 本就能 read 这些文件）。每次发文件都弹
    审批只会让用户困惑"我都让它发了还点一次"。
 
+**任务可见性锚定 device，不锚定 pair（关键不变量）**
+
+pair 是**易失的凭据代**：iOS/微信 webview 把页面挂起时清 localStorage、
+pairToken 12h 过期、takeover 顶替——任何一种都会让手机"重新扫码"，
+产生**新一代 pair**。若任务可见性锚定"当前 pair"，用户重扫一次码，
+之前的所有任务就全部"消失"（pi session 还在 Mac 磁盘上，丢的是入口）。
+
+所以三个地方都锚定 device（手机↔Mac 关系，即 L1 信任锚）：
+
+| 场景 | 锚定 | 说明 |
+|---|---|---|
+| 任务列表 `GET /api/tasks` | `TasksByDevice` | 跨该 device 所有 pair 代；**不按 pair 状态过滤**（takeover 会让旧代 revoked，但旧代任务仍要可见） |
+| 历史回看 `POST /api/history` | `task.PairID → device` | 任务最初属于某代 pair，手机换到新一代后仍放行，只要两代同 device |
+| bridge 上行事件路由 | `activePairID(device)` | bridge 内存里 follow_up 旧任务时带的还是**旧 pairId**，云端必须重路由到 active pair 的 ring，否则手机收不到实时事件 |
+
+store 不变量：一个 device 同时**只有一个 active pair**（`CreatePair` 对 active
+冲突返回 ErrConflict，takeover 是先 revoke 旧代再建新的）。这让
+`activePairID` 唯一，重路由无歧义。
+
+手机侧配合：
+- SSE 握手 401 → 用 refreshToken 换新 pairToken 重建流（后台挂起期间 token 几乎必然过期，这是主要恢复路径）
+- `visibilitychange` 恢复可见 → 立即 `refresh()`（device 锚定的全量列表 + 换 token + 确保 SSE 在跑）
+
 保留期 7 天（与 SPEC §6 一致），GC 待做。
 
 ## 8. 里程碑与验收标准
