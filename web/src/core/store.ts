@@ -60,6 +60,14 @@ export interface TaskView {
   historyLoaded?: boolean;
   /** 排队被挂起的原因（例如 terminal_busy：终端正在使用该目录） */
   holdReason?: string;
+  /**
+   * 待处理的插话（steer 队列）。
+   *
+   * 发送即乐观入队（用户立刻看到自己说了什么），随后 pi 的 queue_update
+   * 事件用权威状态校准。pi 在当前回合结束时消费队列，queue_update 清空
+   * → 队列项自动出队消失，无需额外动作。
+   */
+  pendingSteers: string[];
 }
 
 export interface AppView {
@@ -217,6 +225,7 @@ export class TaskStore {
         exitReason: s.exitReason,
         lastLine: "",
         blocks: [],
+        pendingSteers: [],
       });
     }
     this.#touch();
@@ -262,6 +271,7 @@ export class TaskStore {
         cursor: 0,
         lastLine: "",
         blocks: [],
+        pendingSteers: [],
       };
       this.#tasks.set(taskId, task);
     }
@@ -377,6 +387,17 @@ export class TaskStore {
         }
         break;
       }
+      case "queue_update": {
+        // pi 的权威插话队列：消费时 steering 变空 → 队列项自动出队
+        const q = (rec as { steering?: unknown }).steering;
+        const list = Array.isArray(q) ? q.filter((x): x is string => typeof x === "string") : [];
+        if ((task.pendingSteers?.length ?? 0) !== list.length ||
+            task.pendingSteers?.some((x, i) => x !== list[i])) {
+          task.pendingSteers = list;
+        }
+        this.#touch();
+        break;
+      }
       case "tool_execution_start": {
         const toolCallId = String(rec.toolCallId ?? "");
         const toolName = String(rec.toolName ?? "tool");
@@ -419,6 +440,10 @@ export class TaskStore {
       case "agent_settled": {
         task.status = rec.aborted ? "cancelled" : "settled";
         if (!task.settledAt) task.settledAt = env.ts;
+        if (task.pendingSteers?.length) {
+          task.pendingSteers = [];
+          this.#touch();
+        }
         // 同一处再兜一次：pi 已 settle，任何残留审批都失效了
         if (task.pendingApproval) {
           this.#approvals.delete(task.pendingApproval.requestId);
@@ -504,6 +529,17 @@ export class TaskStore {
     if (typeof env.seq === "number" && env.seq > task.cursor) task.cursor = env.seq;
   }
 
+  /**
+   * 插话乐观入队：发送成功立即上屏，不等 pi 的 queue_update（虽然它通常
+   * 立刻就到）。queue_update 到达时以权威列表整体替换，不会产生重复。
+   */
+  optimisticSteer(taskId: string, text: string): void {
+    if (!text) return;
+    const task = this.#task(taskId);
+    task.pendingSteers = [...(task.pendingSteers ?? []), text];
+    this.#touch(true);
+  }
+
   // ── 内部：快照 ──────────────────────────────────────────────
 
   #touch(immediate = false): void {
@@ -534,6 +570,7 @@ export class TaskStore {
         cursor: task.cursor,
         lastLine: task.lastLine,
         blocks: task.blocks.map((block) => ({ ...block })),
+        pendingSteers: [...(task.pendingSteers ?? [])],
       };
       if (task.startedAt !== undefined) copy.startedAt = task.startedAt;
       if (task.settledAt !== undefined) copy.settledAt = task.settledAt;

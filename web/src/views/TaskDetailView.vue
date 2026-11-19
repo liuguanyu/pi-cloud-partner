@@ -35,6 +35,13 @@ const atBottom = ref(true);
 const hasNewBelow = ref(false);
 
 const terminal = computed(() => (props.task ? isTerminal(props.task.status) : true));
+/** 插话队列（store 的 pendingSteers，pi queue_update 为权威） */
+const queue = computed(() => props.task?.pendingSteers ?? []);
+
+// 新插话入队时，若用户贴着底部则随之滚动（和消息流一致）
+watch(queue, (list, old) => {
+  if (list.length > (old?.length ?? 0) && atBottom.value) scrollToBottom();
+});
 // 已结束（settled/failed/cancelled）的任务可以续聊（follow_up），但 interrupted
 // 不行：那是 bridge 重启造成的，磁盘会话可能停在半截，先重开任务更稳妥
 const resumable = computed(() => {
@@ -174,6 +181,15 @@ function send(): void {
     </button>
 
     <footer>
+      <div v-if="queue.length > 0" class="steer-queue">
+        <div class="steer-label">
+          待插入 {{ queue.length }} 条
+          <span v-if="!terminal" class="muted">· 当前回合结束后生效</span>
+        </div>
+        <div v-for="(item, i) in queue" :key="i" class="steer-item">
+          <span class="steer-dot" />{{ item }}
+        </div>
+      </div>
       <button v-if="!terminal" class="danger" :disabled="props.busy" @click="emit('cancel')">中断</button>
       <textarea
         v-model="draft"
@@ -202,8 +218,7 @@ function send(): void {
   </div>
 </template>
 
-<style scoped>
-.detail { position: relative; display: flex; flex-direction: column; height: 100%; }
+<style scoped>.detail { position: relative; display: flex; flex-direction: column; height: 100%; }
 
 .timeline {
   flex: 1;
@@ -244,5 +259,39 @@ footer button { flex: 0 0 auto; padding: 10px 14px; }
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
   color: var(--fg);
   z-index: 10;
+}
+
+.steer-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #111a26;
+  max-height: 130px;
+  overflow-y: auto;
+}
+.steer-label { font-size: 11px; color: var(--accent); }
+.steer-item {
+  font-size: 12.5px;
+  line-height: 1.5;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  word-break: break-word;
+}
+.steer-dot {
+  flex: 0 0 6px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-top: 7px;
+  animation: steer-pulse 1.2s ease-in-out infinite;
+}
+@keyframes steer-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 </style>

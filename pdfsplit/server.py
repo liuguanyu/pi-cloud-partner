@@ -62,10 +62,18 @@ INDEX_HTML = """<!doctype html>
   h1 { font-size: 20px; margin: 0 0 6px; }
   .sub { color: #8b949e; font-size: 13px; line-height: 1.6; margin: 0 0 20px; }
   .drop {
+    position: relative;
     border: 2px dashed #30363d; border-radius: 12px; padding: 34px 16px; text-align: center;
     cursor: pointer; transition: border-color .15s, background .15s;
   }
   .drop:hover, .drop.over { border-color: #4d9fff; background: #111827; }
+  /* 透明 file input 直接盖在拖放区上：用户点到的就是 input 本身。
+     不能用 JS input.click() + hidden——iOS Safari 对 display:none 的 input
+     静默忽略 click()，选择器不弹（实测踩过）。原生点击必然呼起。 */
+  .drop input[type="file"] {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    opacity: 0; cursor: pointer; font-size: 0;
+  }
   .drop .big { font-size: 34px; }
   .drop .hint { color: #8b949e; font-size: 13px; margin-top: 8px; }
   .fname { margin-top: 12px; font-size: 13px; color: #79c0ff; word-break: break-all; }
@@ -93,8 +101,8 @@ INDEX_HTML = """<!doctype html>
     <div class="big">📄</div>
     <div>点击选择 PDF，或拖进来</div>
     <div class="hint">≤ 512MB</div>
+    <input type="file" id="file" accept="application/pdf,.pdf">
   </div>
-  <input type="file" id="file" accept="application/pdf,.pdf" hidden>
   <div class="fname" id="fname"></div>
 
   <button id="go" disabled>分割并下载 zip</button>
@@ -108,7 +116,6 @@ const $ = (id) => document.getElementById(id);
 const drop = $("drop"), fileInput = $("file"), go = $("go");
 let file = null;
 
-drop.addEventListener("click", () => fileInput.click());
 drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
 drop.addEventListener("drop", (e) => {

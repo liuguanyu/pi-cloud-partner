@@ -476,6 +476,9 @@ export class AppController {
     const { pairToken, pairId } = this.#creds.load();
     if (!pairToken || !pairId) throw new Error("尚未就绪");
     await this.#api.inputTask(pairToken, pairId, taskId, text, mode);
+    // 服务端已接受，立即上屏进插话队列。pi 的 queue_update 事件随后
+    // 到达时会用权威列表整体替换（不会重复）；队列被消费时自动出队。
+    if (mode === "steer") this.store.optimisticSteer(taskId, text);
   }
 
   async cancelTask(taskId: string): Promise<void> {
