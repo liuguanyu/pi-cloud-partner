@@ -408,8 +408,11 @@ export class AppController {
       this.#refreshTasks(pairToken),
       this.#refreshWorkspaces(pairToken),
     ]);
-    // 确保 SSE 在跑（若之前断了，重启它）
-    if (this.#sse?.status !== "online" && this.#sse?.status !== "connecting") {
+    // 确保 SSE 是真活的：状态"在线"也可能是半开连接（iOS 挂起时读不到断连），
+    // 交给客户端用自己的心跳时间戳判定，必要时立刻重连。
+    if (this.#sse?.status === "online") {
+      this.#sse.checkAlive();
+    } else if (this.#sse?.status !== "connecting") {
       this.#startSse(pairToken);
     }
   }

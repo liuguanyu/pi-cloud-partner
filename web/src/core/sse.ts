@@ -31,6 +31,15 @@ export interface SseClientOptions {
 
 const BACKOFF_START_MS = 500;
 const BACKOFF_MAX_MS = 15_000;
+/**
+ * 心跳看门狗阈值。服务端每 30s 发一行 `: ping`，正常情况 30s 内必有数据。
+ * 超过这个时长没收到任何字节 → 判定连接已死（半开连接）。
+ *
+ * 为什么需要：iOS 把 PWA 挂起时 JS 冻结，服务端断开的消息永远读不到，
+ * reader.read() 既不给数据也不给错误。回来时状态仍是"已连接"，UI 看着正常
+ * 但一条都收不到（实测踩过）。只能靠本地时间戳自证。
+ */
+const STALE_MS = 75_000;
 
 export class SseClient {
   #opts: SseClientOptions;
@@ -38,6 +47,9 @@ export class SseClient {
   #abort: AbortController | null = null;
   #attempt = 0;
   #status: SseStatus = "idle";
+  /** 最近一次收到字节的时间戳，供看门狗判定半开连接 */
+  #lastActivity = 0;
+  #watchdog: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: SseClientOptions) {
     this.#opts = opts;
@@ -49,11 +61,34 @@ export class SseClient {
 
   start(): void {
     this.#stopped = false;
+    this.#startWatchdog();
     void this.#loop();
+  }
+
+  /** 页面从后台恢复时调用：发现连接"看起来在线但其实死了"就立刻重连。 */
+  checkAlive(): void {
+    if (this.#stopped || this.#status !== "online") return;
+    if (this.#lastActivity && Date.now() - this.#lastActivity < STALE_MS) return;
+    this.#opts.log?.("SSE 心跳超时，判定连接已死，重连");
+    // abort 会让 #connectOnce 的 reader.read() 抛错，从而走 #loop 的重连分支
+    this.#abort?.abort();
+  }
+
+  #startWatchdog(): void {
+    if (this.#watchdog) return;
+    this.#watchdog = setInterval(() => this.checkAlive(), 15_000);
+  }
+
+  #stopWatchdog(): void {
+    if (this.#watchdog) {
+      clearInterval(this.#watchdog);
+      this.#watchdog = null;
+    }
   }
 
   stop(): void {
     this.#stopped = true;
+    this.#stopWatchdog();
     this.#abort?.abort();
     this.#abort = null;
     this.#setStatus("idle");
@@ -117,6 +152,7 @@ export class SseClient {
     }
 
     this.#attempt = 0;
+    this.#lastActivity = Date.now();
     this.#setStatus("online");
 
     const reader = response.body.getReader();
@@ -126,6 +162,7 @@ export class SseClient {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) return;
+      this.#lastActivity = Date.now();
       buffer += decoder.decode(value, { stream: true });
 
       // SSE 以空行分隔事件块

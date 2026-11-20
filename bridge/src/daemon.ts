@@ -193,7 +193,14 @@ async function main(): Promise<void> {
       }
 
       case Down.taskInput: {
-        const payload = (env.payload ?? {}) as { text?: string; mode?: "steer" | "follow_up"; taskId?: string };
+        const payload = (env.payload ?? {}) as {
+          text?: string;
+          mode?: "steer" | "follow_up";
+          taskId?: string;
+          /** follow_up 专用：bridge 重启后靠它恢复会话上下文 */
+          workspace?: string;
+          sessionId?: string;
+        };
         const taskId = payload.taskId ?? env.taskId ?? "";
         const mode = payload.mode === "follow_up" ? "follow_up" : "steer";
         if (mode === "steer") {
@@ -208,7 +215,11 @@ async function main(): Promise<void> {
           return;
         }
         runner
-          .followUp(taskId, payload.text ?? "")
+          .followUp(taskId, payload.text ?? "", {
+            workspace: payload.workspace,
+            sessionId: payload.sessionId,
+            pairId: env.pairId,
+          })
           .then(() => log("follow_up 续接", { taskId }))
           .catch((error) => log("follow_up 失败", { taskId, error: String(error) }));
         return;

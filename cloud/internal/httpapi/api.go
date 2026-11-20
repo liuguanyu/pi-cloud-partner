@@ -155,11 +155,28 @@ func (s *Server) handleTaskInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	taskRef := r.PathValue("taskId")
-	env, err := protocol.New(protocol.TypeTaskInput, s.cfg.Now()).WithPayload(map[string]any{
+	payload := map[string]any{
 		"taskId": taskRef,
 		"text":   body.Text,
 		"mode":   mode,
-	})
+	}
+
+	// follow_up 可能针对 bridge 重启前的老任务：它的 sessionId/workspace 只存在
+	// 云端（bridge 的内存表重启即失）。不带上，bridge 只能回 unknown_task，
+	// 表现为"点继续没反应"（实测踩过）。
+	if mode == "follow_up" {
+		if id, err := protocol.ParseRef(taskRef, "t"); err == nil {
+			if task, err := s.cfg.Store.TaskByID(r.Context(), id); err == nil {
+				// 归属校验：只能续聊本设备名下的任务
+				if owner, err := s.cfg.Store.PairByID(r.Context(), task.PairID); err == nil && owner.DeviceID == pair.DeviceID {
+					payload["workspace"] = task.Workspace
+					payload["sessionId"] = task.SessionID
+				}
+			}
+		}
+	}
+
+	env, err := protocol.New(protocol.TypeTaskInput, s.cfg.Now()).WithPayload(payload)
 	if err != nil {
 		s.fail(w, err)
 		return

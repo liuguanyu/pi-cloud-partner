@@ -168,8 +168,22 @@ export class Runner {
    * 两条路径都必须建立 RunningTask 并挂到 child.task 上：事件转发
    * （#forwardPiEvent）依赖它把 pi 事件归因到这个 taskId，否则手机收不到。
    */
-  async followUp(taskId: string, text: string): Promise<void> {
-    const ctx = this.#finishedTasks.get(taskId);
+  async followUp(
+    taskId: string,
+    text: string,
+    fallback?: { workspace?: string; sessionId?: string; pairId?: string },
+  ): Promise<void> {
+    // 优先用内存记录；daemon 重启后内存为空，退回云端下发的 workspace/sessionId
+    // （tasks 表里有，随 task.input 一起到达）。两者都没有才算真的不知道。
+    const ctx =
+      this.#finishedTasks.get(taskId) ??
+      (fallback?.workspace && fallback?.sessionId
+        ? {
+            sessionId: fallback.sessionId,
+            workspace: fallback.workspace,
+            pairId: fallback.pairId ?? this.#lastPairId ?? "",
+          }
+        : undefined);
     if (!ctx) throw new Error("unknown_task");
 
     let child = this.#children.get(ctx.workspace);
