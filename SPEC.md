@@ -376,7 +376,8 @@ store 不变量：一个 device 同时**只有一个 active pair**（`CreatePair
 - 安全模型没有放松：门仍然是**配对码**（120s、一次性、6 位，只有 Mac 屏幕
   上有）。指纹只是"认出旧手机"，撞指纹的陌生设备拿不到码就进不来
 - 全新设备（无指纹历史）→ 照旧 PC 人工批准，L1 铁律不变
-- 审计：自动批准的 actor 记 `system:fingerprint`（区别于 `device`），可追溯
+- 审计：自动批准记 `actor=system` + `meta=auto_approve`（区别于人工的 `actor=device`），
+  可追溯。注意 audit_events.actor 是 enum(mobile,device,admin,system)，不能存自定义值
 - 老客户端不带指纹 → 不触发自动批准，走原流程（向下兼容）
 
 **iOS PWA 快照是"安装时冻结"的（实测踩过）**
