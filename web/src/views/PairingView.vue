@@ -75,8 +75,12 @@ watch(() => props.initialCode, applyInitialCode);
       <p v-if="props.error" class="error">{{ props.error }}</p>
       <p class="hint muted">配对码 120 秒有效，一次性。</p>
       <p v-if="isStandalone" class="hint muted standalone-note">
-        桌面图标与 Safari 的存储相互独立，首次使用需要输码配对一次；
+        桌面图标与浏览器的存储相互独立，首次使用需要输码配对一次；
         同一台 iPhone 上配对过就会自动放行，无需回电脑点确认。
+      </p>
+      <p v-else class="hint muted standalone-note">
+        提示：用系统「扫码器」扫开的页面是临时环境，配对不会保存。
+        请改在 Safari 里打开本站 → 分享 → 添加到主屏幕，从图标进入后配对。
       </p>
     </section>
 
