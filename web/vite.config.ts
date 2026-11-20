@@ -7,6 +7,10 @@ const backend = process.env.PCP_BACKEND ?? "http://127.0.0.1:8787";
 
 export default defineConfig({
   plugins: [vue()],
+  define: {
+    // PWA 快照版本守卫：每次构建变化的常量，页面用它判断安装副本是否过期
+    __PCP_WEB_VERSION: JSON.stringify(String(Date.now())),
+  },
   resolve: {
     alias: {
       // 线格式唯一真相源，位于仓库根 protocol/ts

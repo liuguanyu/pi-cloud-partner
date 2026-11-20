@@ -16,7 +16,21 @@ import { onMounted, onUnmounted, ref } from "vue";
 
 const DISMISS_KEY = "pcp.pwa-hint.dismissed.v1";
 
+/**
+ * PWA 快照版本号（由构建注入 = 时间戳）。
+ *
+ * iOS「添加到主屏幕」在安装时缓存整页副本，之后从图标启动优先用快照、
+ * 不重新拉取（HTML 的 no-cache 也拦不住）。所以装了旧版快照的 PWA，
+ * 线上更新后它不会自动跟上来。这里把「安装时的版本」记下来，页面 JS 版本
+ * 变了就提示用户删图标重加（这是 iOS 上刷新 PWA 快照的唯一可靠办法）。
+ */
+declare const __PCP_WEB_VERSION: string | undefined;
+const WEB_VERSION =
+  typeof __PCP_WEB_VERSION !== "undefined" ? __PCP_WEB_VERSION : "dev";
+const VERSION_KEY = "pcp.pwa-installed-version";
+
 const show = ref(false);
+const stalePwa = ref(false);
 const isIOS =
   /iphone|ipad|ipod/i.test(navigator.userAgent) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -61,7 +75,26 @@ function install(): void {
 }
 
 onMounted(() => {
-  if (isStandalone) return;
+  if (isStandalone) {
+    // PWA 模式：核对安装时的版本与当前 JS 版本
+    const recorded = (() => {
+      try {
+        return localStorage.getItem(VERSION_KEY) ?? "";
+      } catch {
+        return "";
+      }
+    })();
+    if (recorded && recorded !== WEB_VERSION) {
+      stalePwa.value = true;
+    }
+    return;
+  }
+  // 非 PWA 模式：记录「本次访问的版本」作为安装基准
+  try {
+    localStorage.setItem(VERSION_KEY, WEB_VERSION);
+  } catch {
+    /* ignore */
+  }
   if (isIOS) {
     if (!dismissed()) show.value = true;
     return;
@@ -75,7 +108,18 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-if="show" class="hint">
+  <div v-if="stalePwa" class="hint stale">
+    <div class="body">
+      <strong>应用已更新，请刷新</strong>
+      <p>
+        这个桌面图标缓存的是旧版本页面。删除它，重新打开
+        <b>lab.leon82.com</b>，分享 → 添加到主屏幕即可。
+        （配对与任务数据都在服务器上，重加图标不丢任何东西）
+      </p>
+    </div>
+  </div>
+
+  <div v-else-if="show" class="hint">
     <div class="body">
       <strong>添加「pi」到主屏幕</strong>
       <p v-if="isIOS">
@@ -97,6 +141,9 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.hint.stale { border-color: #6b4a1f; background: #1a1408; }
+.hint.stale .body strong { color: #f0883e; }
+
 .hint {
   display: flex;
   gap: 10px;
