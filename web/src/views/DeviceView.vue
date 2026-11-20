@@ -36,6 +36,15 @@ const active = ref<PendingClaim | null>(null);
 const error = ref("");
 const busy = ref(false);
 const copied = ref(false);
+/**
+ * 生成配对码那一刻，服务器上已有的 active pair。
+ *
+ * 用途：区分"配对刚完成"与"早就存在的旧 active"。
+ * 后者不能清掉码（换设备时旧 active 会一直在，直到新的一次批准顶替它）。
+ */
+const activeAtStart = ref<string>("");
+/** 配对刚成功（用于给一次明确的反馈，而不是静默跳转） */
+const justPaired = ref(false);
 const now = ref(Date.now());
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -85,6 +94,15 @@ async function startPairing(): Promise<void> {
     claimUrl.value = created.claimUrl;
     expiresAt.value = created.expiresAt;
     pending.value = null;
+    justPaired.value = false;
+    // 记下"此刻已存在的 active pair"，poll 里据此判断本次配对是否完成
+    try {
+      const snap = await call<{ active: PendingClaim | null }>("/api/local/pair/pending");
+      activeAtStart.value = snap.active?.pairId ?? "";
+      active.value = snap.active;
+    } catch {
+      activeAtStart.value = active.value?.pairId ?? "";
+    }
     schedulePoll();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -105,6 +123,16 @@ async function poll(): Promise<void> {
     );
     pending.value = result.pending;
     active.value = result.active;
+
+    // 配对完成：active 变成了与"生成码时"不同的 pairId。
+    // 这里必须清码，否则模板会一直停在扫码卡片（v-else-if="code" 优先于
+    // "已配对"），用户看到的就是"扫完了 Mac 还停在扫码页"。
+    // 注意：自动批准（指纹命中）时 pending 一直是空的，只有 active 变化可依赖。
+    if (code.value && result.active && result.active.pairId !== activeAtStart.value) {
+      clearCode();
+      justPaired.value = true;
+      setTimeout(() => (justPaired.value = false), 4000);
+    }
 
     // 只在**码自己过期**时清掉它。
     // 不能因为"服务器上还有一个旧的 active pair"就清——
@@ -216,6 +244,7 @@ onUnmounted(() => {
     </section>
 
     <section v-else-if="active" class="card ok">
+      <p v-if="justPaired" class="paired-flash">✓ 配对成功</p>
       <h2>已配对</h2>
       <p class="muted">
         一台手机正在控制这台机器<template v-if="active.claimIp">（来源 IP {{ active.claimIp }}）</template>。
@@ -237,6 +266,17 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.paired-flash {
+  color: #3fb950;
+  font-size: 13px;
+  margin: 0 0 8px;
+  animation: fade-in .25s ease-out;
+}
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+
 .wrap { max-width: 460px; margin: 0 auto; padding: 22px 18px 40px; }
 
 header { margin-bottom: 18px; }

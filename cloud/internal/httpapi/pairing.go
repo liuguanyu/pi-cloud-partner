@@ -384,6 +384,22 @@ func (s *Server) autoApproveForRepeatClient(ctx context.Context, pairRef, finger
 	if err != nil {
 		return err
 	}
+	// 诊断用：列出窗口内候选指纹（截断），便于判断是"没记录"还是"不一致"
+	var candidates []string
+	for _, p := range pairs {
+		if p.ID == pairID || p.CreatedAt < since || p.ClaimFingerprint == "" {
+			continue
+		}
+		candidates = append(candidates, p.ClaimFingerprint[:8])
+	}
+	if len(candidates) > 0 {
+		fpPrefix := fingerprint
+		if len(fpPrefix) > 8 {
+			fpPrefix = fpPrefix[:8]
+		}
+		s.cfg.Log.Info("指纹比对", "claim", fpPrefix, "candidates", candidates)
+	}
+
 	for _, p := range pairs {
 		if p.ID == pairID {
 			continue

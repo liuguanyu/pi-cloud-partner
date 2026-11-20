@@ -615,6 +615,21 @@ export class TaskStore {
 
 // ── 纯函数助手 ────────────────────────────────────────────────
 
+/** 统一取工具调用参数：兼容 arguments(JSON 字符串) / input / args 三种写法。 */
+export function toolArgs(block: unknown): unknown {
+  if (typeof block !== "object" || block === null) return undefined;
+  const b = block as { arguments?: unknown; input?: unknown; args?: unknown };
+  const raw = b.arguments ?? b.input ?? b.args;
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
+
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
 }
@@ -665,7 +680,9 @@ function blocksFromContent(content: unknown): Block[] {
         kind: "tool",
         toolCallId: block.id,
         toolName: block.name ?? "tool",
-        argsText: truncate(stringify(block.input), 240),
+        // pi 的 toolCall 块字段是 arguments（JSON 字符串），不是 input；
+        // 只读 input 会得到 undefined（实测）
+        argsText: truncate(stringify(toolArgs(block)), 240),
         done: false,
       });
     }
