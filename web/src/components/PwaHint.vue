@@ -123,11 +123,11 @@ onUnmounted(() => {
     <div class="body">
       <strong>添加「pi」到主屏幕</strong>
       <p v-if="isIOS">
-        用相机扫码进来的页面，切后台就会被系统回收、找不到回来。
-        点 Safari 底部
+        装成桌面图标后是独立应用，不会像标签页那样被系统回收。
+        在 Safari 里点<b>地址栏左侧的 ☰ 菜单</b>（旧版 iOS 是底部的
         <b>分享</b>
         <svg viewBox="0 0 16 16" class="ico"><path fill="currentColor" d="M8 1.5l4 4h-2.5V11h-3V5.5H4l4-4zM3.5 6.5h1.7v7h5.6v-7h1.7v8.2H3.5V6.5z"/></svg>
-        → <b>添加到主屏幕</b>，以后从桌面图标进入就不会丢。
+        ）→ <b>添加到主屏幕</b>。
       </p>
       <p v-else>
         主屏幕图标是独立应用，不受浏览器回收影响，建议安装。
