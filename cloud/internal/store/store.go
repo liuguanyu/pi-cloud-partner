@@ -58,8 +58,8 @@ type Store interface {
 	SetPairStatus(ctx context.Context, id model.ID, status model.PairStatus, now int64, revokedBy model.RevokedBy) error
 	// SetPairUser 在 approve 时把设备主人绑定到 pair
 	SetPairUser(ctx context.Context, id, userID model.ID) error
-	// SetPairClaimant 记录认领者标识与来源 IP（claim 阶段，此时还没有用户身份）
-	SetPairClaimant(ctx context.Context, id model.ID, claimantID, ip string) error
+	// SetPairClaimant 记录认领者标识、来源 IP 与环境指纹（claim 阶段，此时还没有用户身份）
+	SetPairClaimant(ctx context.Context, id model.ID, claimantID, ip, fingerprint string) error
 
 	// ── 审计（append-only） ────────────────────────────────
 	AppendAudit(ctx context.Context, e model.AuditEvent) error

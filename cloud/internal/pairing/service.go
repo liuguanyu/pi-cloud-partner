@@ -175,6 +175,9 @@ type ClaimInput struct {
 	ClaimantID string
 	IP         string
 	DeviceName string
+	// Fingerprint 是手机浏览器环境指纹（SHA-256 hex）。
+	// 与历史 pair 的指纹比对用于"同机重配对免人工批准"。不参与抢码判定。
+	Fingerprint string
 }
 
 func (s *Service) Claim(ctx context.Context, in ClaimInput) (ClaimResult, error) {
@@ -199,8 +202,8 @@ func (s *Service) Claim(ctx context.Context, in ClaimInput) (ClaimResult, error)
 
 	switch pair.Status {
 	case model.PairRequested:
-		// 首次认领：记录认领者标识与来源 IP（批准时给 PC 端看）
-		if err := s.store.SetPairClaimant(ctx, pair.ID, claimant, in.IP); err != nil {
+		// 首次认领：记录认领者标识、来源 IP 与环境指纹（批准时给 PC 端看）
+		if err := s.store.SetPairClaimant(ctx, pair.ID, claimant, in.IP, in.Fingerprint); err != nil {
 			return ClaimResult{}, err
 		}
 		pair.ClaimantID = claimant
@@ -238,8 +241,20 @@ func (s *Service) Claim(ctx context.Context, in ClaimInput) (ClaimResult, error)
 	return ClaimResult{PairID: fmtPair(pair.ID), Status: string(model.PairPendingApproval), RefreshToken: refresh, ExpiresAt: expires}, nil
 }
 
-// Approve 由 PC 发起，是**唯一**的授权动作。
+// Approve 由 PC 发起，是**唯一**的常规授权动作。
 func (s *Service) Approve(ctx context.Context, deviceID model.ID, pairID model.ID, takeover bool) (ApproveResult, error) {
+	return s.approve(ctx, deviceID, pairID, takeover, "device")
+}
+
+// ApproveBySystem 供"同机重配对免人工批准"使用：
+// 当 claim 携带的浏览器环境指纹与该 device 最近 30 天内 pair 过的指纹完全一致时，
+// 视为主人自己的手机（凭据被系统清掉后重新配对），云端代为批准。
+// 调用方（HTTP 层）必须先完成指纹匹配与时间窗校验；审计里标明 actor=system:fingerprint。
+func (s *Service) ApproveBySystem(ctx context.Context, deviceID model.ID, pairID model.ID) (ApproveResult, error) {
+	return s.approve(ctx, deviceID, pairID, true, "system:fingerprint")
+}
+
+func (s *Service) approve(ctx context.Context, deviceID model.ID, pairID model.ID, takeover bool, actor string) (ApproveResult, error) {
 	now := s.now()
 	pair, err := s.store.PairByID(ctx, pairID)
 	if err != nil {
@@ -286,9 +301,9 @@ func (s *Service) Approve(ctx context.Context, deviceID model.ID, pairID model.I
 	if c, err := s.store.PairCodeByPair(ctx, pairID); err == nil {
 		_ = s.store.PairCodeDelete(ctx, c.Code)
 	}
-	s.audit(ctx, "pair.approved", "device", &deviceID, &pairID, now)
+	s.audit(ctx, "pair.approved", actor, &deviceID, &pairID, now)
 	if replaced {
-		s.audit(ctx, "pair.takeover", "device", &deviceID, &pairID, now)
+		s.audit(ctx, "pair.takeover", actor, &deviceID, &pairID, now)
 	}
 	return ApproveResult{PairID: fmtPair(pairID), Status: string(model.PairActive), Takeover: replaced}, nil
 }

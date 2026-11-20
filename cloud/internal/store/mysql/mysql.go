@@ -429,11 +429,12 @@ func (s *Store) scanPair(row interface{ Scan(...any) error }) (model.Pair, error
 		p                    model.Pair
 		rawID, rawDev, rawUs []byte
 		claimantID, claimIP  string
+		fingerprint          string
 		status               string
 		approved, revoked    sql.NullInt64
 		revokedBy            sql.NullString
 	)
-	err := row.Scan(&rawID, &rawDev, &rawUs, &claimantID, &claimIP, &status, &p.CreatedAt, &approved, &revoked, &revokedBy)
+	err := row.Scan(&rawID, &rawDev, &rawUs, &claimantID, &claimIP, &fingerprint, &status, &p.CreatedAt, &approved, &revoked, &revokedBy)
 	if err != nil {
 		return model.Pair{}, wrap(err)
 	}
@@ -444,6 +445,7 @@ func (s *Store) scanPair(row interface{ Scan(...any) error }) (model.Pair, error
 	}
 	p.ClaimantID = claimantID
 	p.ClaimIP = claimIP
+	p.ClaimFingerprint = fingerprint
 	p.Status = model.PairStatus(status)
 	p.ApprovedAt = toPtr(approved)
 	p.RevokedAt = toPtr(revoked)
@@ -451,7 +453,7 @@ func (s *Store) scanPair(row interface{ Scan(...any) error }) (model.Pair, error
 	return p, nil
 }
 
-const pairColumns = `id, device_id, user_id, claimant_id, claim_ip, status, created_at, approved_at, revoked_at, revoked_by`
+const pairColumns = `id, device_id, user_id, claimant_id, claim_ip, claim_fingerprint, status, created_at, approved_at, revoked_at, revoked_by`
 
 func (s *Store) PairByID(ctx context.Context, id model.ID) (model.Pair, error) {
 	return s.scanPair(s.db.QueryRowContext(ctx, `SELECT `+pairColumns+` FROM pairs WHERE id = ?`, id[:]))
@@ -526,9 +528,10 @@ func (s *Store) SetPairUser(ctx context.Context, id, userID model.ID) error {
 
 // ── 审计 ──────────────────────────────────────────────────────
 
-func (s *Store) SetPairClaimant(ctx context.Context, id model.ID, claimantID, ip string) error {
+func (s *Store) SetPairClaimant(ctx context.Context, id model.ID, claimantID, ip, fingerprint string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE pairs SET claimant_id = ?, claim_ip = ? WHERE id = ?`, claimantID, ip, id[:])
+		`UPDATE pairs SET claimant_id = ?, claim_ip = ?, claim_fingerprint = ? WHERE id = ?`,
+		claimantID, ip, fingerprint, id[:])
 	return wrap(err)
 }
 

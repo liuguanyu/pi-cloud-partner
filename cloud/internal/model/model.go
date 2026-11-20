@@ -126,11 +126,15 @@ type Pair struct {
 	// ClaimantID 是手机自己生成的稳定标识，用于 claim 幂等与抢码判定
 	ClaimantID string
 	ClaimIP    string
-	Status     PairStatus
-	CreatedAt  int64
-	ApprovedAt *int64
-	RevokedAt  *int64
-	RevokedBy  string
+	// ClaimFingerprint 是认领时的浏览器环境指纹（SHA-256 hex，可为空）。
+	// 用于"同机重配对免人工批准"：claim 时若该 device 历史 pair 里有相同指纹，
+	// 云端自动 takeover 批准，省掉回 Mac 点一次。
+	ClaimFingerprint string
+	Status           PairStatus
+	CreatedAt        int64
+	ApprovedAt       *int64
+	RevokedAt        *int64
+	RevokedBy        string
 }
 
 // Token 只存哈希，明文仅在签发那一刻返回一次。

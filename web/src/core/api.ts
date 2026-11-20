@@ -114,8 +114,8 @@ export class ApiClient {
    * 认领配对码。**不需要登录**（L1）：授权发生在 PC 侧的 approve。
    * claimantId 仅用于幂等与抢码判定。
    */
-  claim(code: string, deviceName: string, claimantId: string): Promise<PairClaimResult> {
-    return this.#json("POST", "/pair/claim", { kind: "none" }, { code, deviceName, claimantId });
+  claim(code: string, deviceName: string, claimantId: string, fingerprint?: string): Promise<PairClaimResult> {
+    return this.#json("POST", "/pair/claim", { kind: "none" }, { code, deviceName, claimantId, fingerprint });
   }
 
   /** 用 refreshToken 查自己这个 pair 的状态（等待批准时轮询用）。 */

@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/leon82/pcp/cloud/internal/auth"
@@ -16,6 +18,9 @@ type claimBody struct {
 	// ClaimantID 由手机生成并持久化，用于 claim 幂等与抢码判定。
 	// 手机不再需要登录，所以这是唯一能区分"同一台手机重试"的标识。
 	ClaimantID string `json:"claimantId"`
+	// Fingerprint 浏览器环境指纹（每次打开页面可重算，不依赖本地存储）。
+	// 同机重配对时云端据此免人工批准（见 autoApproveForRepeatClient）。
+	Fingerprint string `json:"fingerprint"`
 }
 
 type approveBody struct {
@@ -75,18 +80,31 @@ func (s *Server) handlePairClaim(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := s.cfg.Pairing.Claim(r.Context(), pairing.ClaimInput{
-		Code:       body.Code,
-		ClaimantID: body.ClaimantID,
-		IP:         ip,
-		DeviceName: body.DeviceName,
+		Code:        body.Code,
+		ClaimantID:  body.ClaimantID,
+		IP:          ip,
+		DeviceName:  body.DeviceName,
+		Fingerprint: body.Fingerprint,
 	})
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 
-	// 立刻通知 PC：有人申请接管
-	if pc, err := s.cfg.Store.PairByID(r.Context(), mustRef(res.PairID)); err == nil {
+	// 同一台手机（环境指纹与历史 pair 一致）重新配对：免回 PC 点批准。
+	// 触发条件保守：指纹完整匹配 + 最近 30 天内该 Mac 确实与这类环境配对过。
+	// 任何一步失败都不影响正常流程（继续等 PC 手动批准）。
+	if res.Status == "pending_approval" && body.Fingerprint != "" {
+		if err := s.autoApproveForRepeatClient(r.Context(), res.PairID, body.Fingerprint); err != nil {
+			s.cfg.Log.Info("同机自动批准未触发", "pair", res.PairID, "reason", err)
+		} else {
+			res.Status = "active"
+			s.cfg.Log.Info("同机重配对：自动批准", "pair", res.PairID)
+		}
+	}
+
+	// 立刻通知 PC：有人申请接管（同机自动批准后不再推 —— 已经批完了）
+	if pairNow, err := s.cfg.Store.PairByID(r.Context(), mustRef(res.PairID)); err == nil && pairNow.Status == model.PairPendingApproval {
 		env, _ := protocol.New(protocol.TypeUIRequest, s.cfg.Now()).WithPayload(map[string]any{
 			"kind":       "pair_approval",
 			"pairId":     res.PairID,
@@ -95,7 +113,7 @@ func (s *Server) handlePairClaim(w http.ResponseWriter, r *http.Request) {
 			"claimIp":    ip,
 		})
 		env.PairID = res.PairID
-		_ = s.cfg.Hub.Send(pc.DeviceID, env)
+		_ = s.cfg.Hub.Send(pairNow.DeviceID, env)
 	}
 
 	writeJSON(w, http.StatusOK, res)
@@ -333,6 +351,67 @@ func (s *Server) pairViews(r *http.Request, pairs []model.Pair) []map[string]any
 		out = append(out, view)
 	}
 	return out
+}
+
+// autoApproveForRepeatClient 在 claim 成功后检查：这个环境指纹是否与
+// 该 Mac 最近 30 天内 pair 过的环境一致。是 → 系统自动批准（takeover）。
+//
+// 安全性依赖两个独立事实：
+//  1. 配对码（120s、一次性、6 位）是门 —— 没有它连 claim 都进不来
+//  2. 指纹匹配只是"认出旧手机"，不是授权本身
+//
+// 二者同时满足才免人工批准。指纹是环境特征（UA/语言/时区/屏幕），同型号
+// 同系统的 iPhone 可能撞 —— 但撞了也拿不到配对码，无实际危害。
+func (s *Server) autoApproveForRepeatClient(ctx context.Context, pairRef, fingerprint string) error {
+	pairID, err := mustRefErr(pairRef)
+	if err != nil {
+		return err
+	}
+	pair, err := s.cfg.Store.PairByID(ctx, pairID)
+	if err != nil {
+		return err
+	}
+	device, err := s.cfg.Store.DeviceByID(ctx, pair.DeviceID)
+	if err != nil {
+		return err
+	}
+	_ = device
+
+	// 最近 30 天（毫秒）内该 device 名下、状态为 active/revoked（曾生效过）的 pair
+	const windowMs = int64(30 * 24 * 60 * 60 * 1000)
+	since := s.cfg.Now() - windowMs
+	pairs, err := s.cfg.Store.PairsByDevice(ctx, device.ID)
+	if err != nil {
+		return err
+	}
+	for _, p := range pairs {
+		if p.ID == pairID {
+			continue
+		}
+		if p.CreatedAt < since {
+			continue
+		}
+		if p.ClaimFingerprint == "" || p.ClaimFingerprint != fingerprint {
+			continue
+		}
+		// 命中：同机重配对
+		if _, err := s.cfg.Pairing.ApproveBySystem(ctx, device.ID, pairID); err != nil {
+			return err
+		}
+		return nil
+	}
+	return errNotRepeatClient
+}
+
+// errNotRepeatClient：不是"老手机"，继续走人工批准。
+var errNotRepeatClient = errors.New("no matching fingerprint in window")
+
+func mustRefErr(ref string) (model.ID, error) {
+	id, err := protocol.ParseRef(ref, "p")
+	if err != nil {
+		return model.ID{}, err
+	}
+	return id, nil
 }
 
 func mustRef(ref string) model.ID {

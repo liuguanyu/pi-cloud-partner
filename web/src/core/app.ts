@@ -11,6 +11,7 @@
  */
 import { ApiClient, ApiError, type PairView } from "./api.ts";
 import { CredentialStore, type StoredCredentials } from "./credential.ts";
+import { browserFingerprint } from "./fingerprint.ts";
 import { SseClient, type SseStatus } from "./sse.ts";
 import { TaskStore, type AppView } from "./store.ts";
 import type { Capacity, UiRequestPayload } from "@wire";
@@ -178,10 +179,13 @@ export class AppController {
 
   async claim(code: string, deviceName: string): Promise<void> {
     try {
+      // 环境指纹（不依赖本地存储）：同机重配对时云端可免人工批准
+      const fingerprint = await browserFingerprint();
       const result = await this.#api.claim(
         code.trim().toUpperCase(),
         deviceName || "phone",
         this.#claimantId(),
+        fingerprint,
       );
       this.#creds.patch({ pairId: result.pairId, refreshToken: result.refreshToken });
       this.#setPhase("waiting-approval");

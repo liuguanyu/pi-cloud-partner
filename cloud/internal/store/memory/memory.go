@@ -323,7 +323,7 @@ func (s *Store) SetPairUser(_ context.Context, id, userID model.ID) error {
 	return nil
 }
 
-func (s *Store) SetPairClaimant(_ context.Context, id model.ID, claimantID, ip string) error {
+func (s *Store) SetPairClaimant(_ context.Context, id model.ID, claimantID, ip, fingerprint string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.pairs[id]
@@ -332,6 +332,7 @@ func (s *Store) SetPairClaimant(_ context.Context, id model.ID, claimantID, ip s
 	}
 	p.ClaimantID = claimantID
 	p.ClaimIP = ip
+	p.ClaimFingerprint = fingerprint
 	s.pairs[id] = p
 	return nil
 }
