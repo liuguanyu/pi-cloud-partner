@@ -1,12 +1,35 @@
 package httpapi_test
 
 import (
+	"context"
 	"net/http"
 	"testing"
+
+	"github.com/leon82/pcp/cloud/internal/protocol"
 )
 
 // 同一台手机（浏览器环境指纹一致）重新配对时免人工批准。
 // 覆盖三个分支：同指纹→自动 active；异指纹→保持 pending；无历史→保持 pending。
+// storeAudit 读取某 pair 指定 action 的审计条数。
+func storeAudit(t *testing.T, e *env, pairRef, action string) []string {
+	t.Helper()
+	id, err := protocol.ParseRef(pairRef, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := e.store.ListAudit(context.Background(), id, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, ev := range events {
+		if ev.Action == action {
+			out = append(out, ev.Actor+":"+ev.Meta)
+		}
+	}
+	return out
+}
+
 func TestRepeatClientAutoApproveByFingerprint(t *testing.T) {
 	e := newEnv(t)
 	fp := "fp-iphone-15-same-env"
@@ -41,6 +64,12 @@ func TestRepeatClientAutoApproveByFingerprint(t *testing.T) {
 	}
 	if claim2.Status != "active" {
 		t.Fatalf("同指纹重配对应自动批准为 active，实际 %s", claim2.Status)
+	}
+
+	// 自动批准必须留审计（meta 是 JSON 列，写坏会静默丢失）
+	approvals := storeAudit(t, e, claim2.PairID, "pair.approved")
+	if len(approvals) != 1 {
+		t.Fatalf("自动批准应恰好一条 pair.approved 审计，实际 %d", len(approvals))
 	}
 
 	// ── 第三次配对：不同指纹 → 保持 pending（必须人工批准）──

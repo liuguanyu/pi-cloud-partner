@@ -252,7 +252,7 @@ func (s *Service) Approve(ctx context.Context, deviceID model.ID, pairID model.I
 // 视为主人自己的手机（凭据被系统清掉后重新配对），云端代为批准。
 // 调用方（HTTP 层）必须先完成指纹匹配与时间窗校验。
 func (s *Service) ApproveBySystem(ctx context.Context, deviceID model.ID, pairID model.ID) (ApproveResult, error) {
-	return s.approve(ctx, deviceID, pairID, true, "system", "auto_approve")
+	return s.approve(ctx, deviceID, pairID, true, "system", `{"reason":"auto_approve","method":"fingerprint"}`)
 }
 
 func (s *Service) approve(ctx context.Context, deviceID model.ID, pairID model.ID, takeover bool, actor, meta string) (ApproveResult, error) {
