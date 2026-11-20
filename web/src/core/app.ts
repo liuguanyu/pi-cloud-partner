@@ -188,6 +188,12 @@ export class AppController {
         fingerprint,
       );
       this.#creds.patch({ pairId: result.pairId, refreshToken: result.refreshToken });
+      if (result.status === "active") {
+        // 同机重配对被云端自动批准（指纹命中）：不用等 PC 点批准，直接就绪
+        this.#setPhase("booting");
+        await this.#ensureReady();
+        return;
+      }
       this.#setPhase("waiting-approval");
       this.#startApprovalPolling();
     } catch (error) {

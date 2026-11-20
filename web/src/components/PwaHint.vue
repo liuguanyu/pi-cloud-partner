@@ -119,7 +119,7 @@ onUnmounted(() => {
     </div>
   </div>
 
-  <div v-else-if="show" class="hint">
+  <div v-else-if="show && !isStandalone" class="hint">
     <div class="body">
       <strong>添加「pi」到主屏幕</strong>
       <p v-if="isIOS">

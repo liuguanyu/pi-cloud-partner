@@ -23,6 +23,11 @@ const emit = defineEmits<{
   claim: [code: string, deviceName: string];
 }>();
 
+/** 桌面图标（PWA 容器）与 Safari 存储相互独立：给图标场景一句针对性文案 */
+const isStandalone =
+  (navigator as { standalone?: boolean }).standalone === true ||
+  window.matchMedia("(display-mode: standalone)").matches;
+
 const codeInput = ref("");
 const deviceName = ref(defaultDeviceName());
 
@@ -69,6 +74,10 @@ watch(() => props.initialCode, applyInitialCode);
       </button>
       <p v-if="props.error" class="error">{{ props.error }}</p>
       <p class="hint muted">配对码 120 秒有效，一次性。</p>
+      <p v-if="isStandalone" class="hint muted standalone-note">
+        桌面图标与 Safari 的存储相互独立，首次使用需要输码配对一次；
+        同一台 iPhone 上配对过就会自动放行，无需回电脑点确认。
+      </p>
     </section>
 
     <section v-else-if="props.phase === 'waiting-approval'">
