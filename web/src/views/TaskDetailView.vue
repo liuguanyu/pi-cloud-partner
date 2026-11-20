@@ -39,8 +39,11 @@ const terminal = computed(() => (props.task ? isTerminal(props.task.status) : tr
 const queue = computed(() => props.task?.pendingSteers ?? []);
 
 // 新插话入队时，若用户贴着底部则随之滚动（和消息流一致）
-watch(queue, (list, old) => {
-  if (list.length > (old?.length ?? 0) && atBottom.value) scrollToBottom();
+// 队列自身有滚动：新条目入队时滚到队列底部（最新一条贴着输入栏）
+const queueEl = ref<HTMLElement | null>(null);
+watch(queue, (list) => {
+  if (queueEl.value) queueEl.value.scrollTop = queueEl.value.scrollHeight;
+  void list;
 });
 // 已结束（settled/failed/cancelled）的任务可以续聊（follow_up），但 interrupted
 // 不行：那是 bridge 重启造成的，磁盘会话可能停在半截，先重开任务更稳妥
@@ -180,16 +183,19 @@ function send(): void {
       ↓ 回到最新<template v-if="hasNewBelow"> · 有新内容</template>
     </button>
 
-    <footer>
-      <div v-if="queue.length > 0" class="steer-queue">
-        <div class="steer-label">
-          待插入 {{ queue.length }} 条
-          <span v-if="!terminal" class="muted">· 当前回合结束后生效</span>
-        </div>
-        <div v-for="(item, i) in queue" :key="i" class="steer-item">
-          <span class="steer-dot" />{{ item }}
-        </div>
+    <!-- 插话队列：固定在底部输入栏上方（独立于滚动区与操作栏），
+         有新插话时自动滚动进视野 -->
+    <div v-if="queue.length > 0" ref="queueEl" class="steer-queue">
+      <div class="steer-label">
+        ⌨ 待插入 {{ queue.length }} 条
+        <span v-if="!terminal" class="muted">· 当前回合结束后依次生效</span>
       </div>
+      <div v-for="(item, i) in queue" :key="i" class="steer-item">
+        <span class="steer-dot" />{{ item }}
+      </div>
+    </div>
+
+    <footer>
       <button v-if="!terminal" class="danger" :disabled="props.busy" @click="emit('cancel')">中断</button>
       <textarea
         v-model="draft"
@@ -261,16 +267,15 @@ footer button { flex: 0 0 auto; padding: 10px 14px; }
   z-index: 10;
 }
 
+/* 固定区：timeline 之外、footer 之上，不随消息流滚动 */
 .steer-queue {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  padding: 8px 10px;
-  margin-bottom: 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
   background: #111a26;
-  max-height: 130px;
+  max-height: 34vh;
   overflow-y: auto;
 }
 .steer-label { font-size: 11px; color: var(--accent); }

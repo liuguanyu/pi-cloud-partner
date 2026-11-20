@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PwaHint from "../components/PwaHint.vue";
 /**
  * 任务列表 + 新建任务。
  *
@@ -173,6 +174,8 @@ function statusLabel(status: string): string {
       </span>
       <span v-if="capacityText" class="muted">· {{ capacityText }}</span>
     </div>
+
+    <PwaHint />
 
     <p v-if="props.primed && !props.bridgeOnline" class="notice">
       那台电脑当前不在线。可以查看历史任务，但无法下发新任务。

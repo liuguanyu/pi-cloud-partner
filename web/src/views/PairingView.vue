@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PwaHint from "../components/PwaHint.vue";
 /**
  * 配对视图：三条互斥的路径，由父组件通过 phase 决定显示哪一条。
  *   need-token        粘贴登录凭据（M1 没有 SSO）
@@ -47,6 +48,8 @@ watch(() => props.initialCode, applyInitialCode);
 
 <template>
   <main class="wrap">
+    <PwaHint />
+
     <section v-if="props.phase === 'need-pair'">
       <h1>输入配对码</h1>
       <p class="muted">在运行 pi 的那台电脑上打开控制台，生成 6 位配对码。</p>
